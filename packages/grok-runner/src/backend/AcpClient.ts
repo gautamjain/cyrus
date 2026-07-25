@@ -11,7 +11,26 @@ import type {
 type Pending = {
 	resolve: (result: unknown) => void;
 	reject: (error: Error) => void;
-	timer: ReturnType<typeof setTimeout>;
+	/** Absolute wall-clock timer (optional). */
+	wallTimer?: ReturnType<typeof setTimeout>;
+	/** Idle timer; re-armed by {@link AcpClient.touchActivity}. */
+	idleTimer?: ReturnType<typeof setTimeout>;
+	/** Idle timeout duration; present when idle watchdog is active. */
+	idleTimeoutMs?: number;
+	method: string;
+};
+
+/**
+ * Per-request timeout options.
+ *
+ * - `timeoutMs`: absolute wall-clock. `0` disables. `undefined` uses client default.
+ * - `idleTimeoutMs`: fail only after this much silence (no agent messages).
+ *   Resets on every notification / agent→client request. `0` disables.
+ *   Codex uses the same pattern for turn execution (activity-based, not wall-clock).
+ */
+export type AcpRequestTimeoutOptions = {
+	timeoutMs?: number;
+	idleTimeoutMs?: number;
 };
 
 export type AcpClientOptions = {
@@ -19,7 +38,10 @@ export type AcpClientOptions = {
 	args: string[];
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
-	/** Default request timeout in ms */
+	/**
+	 * Default wall-clock timeout for control-plane requests (initialize, auth,
+	 * session/new, session/load, …). `0` disables. Defaults to 120s when unset.
+	 */
 	requestTimeoutMs?: number;
 	onNotification?: (notification: JsonRpcNotification) => void;
 	/**
@@ -41,6 +63,13 @@ export type AcpClientOptions = {
  * Important: ACP is bidirectional. The agent may send *requests* to the client
  * (e.g. `session/request_permission`) with both `id` and `method`. Those must
  * not be treated as responses to our pending calls.
+ *
+ * Timeouts:
+ * - Control-plane RPCs use a wall-clock timeout so a wedged child cannot hang forever.
+ * - Long agent turns (`session/prompt`) should use `idleTimeoutMs` instead: any
+ *   agent traffic (session/update notifications, reverse RPCs) resets the idle
+ *   timer, matching Codex's turn idle watchdog. Productive multi-hour turns stay
+ *   alive; true silence still fails the pending request.
  */
 export class AcpClient {
 	private proc: ChildProcess | null = null;
@@ -111,14 +140,25 @@ export class AcpClient {
 		});
 	}
 
+	/**
+	 * Send a JSON-RPC request.
+	 *
+	 * Third argument may be a number (legacy wall-clock ms) or
+	 * {@link AcpRequestTimeoutOptions}.
+	 */
 	async request(
 		method: string,
 		params?: unknown,
-		timeoutMs?: number,
+		timeoutOrOptions?: number | AcpRequestTimeoutOptions,
 	): Promise<unknown> {
 		if (!this.proc?.stdin || this.closed) {
 			throw new Error(`Cannot send ACP request ${method}: process not running`);
 		}
+
+		const opts = normalizeTimeoutOptions(
+			timeoutOrOptions,
+			this.options.requestTimeoutMs,
+		);
 
 		const id = this.nextId++;
 		const request: JsonRpcRequest = {
@@ -128,29 +168,61 @@ export class AcpClient {
 			...(params !== undefined ? { params } : {}),
 		};
 
-		const timeout = timeoutMs ?? this.options.requestTimeoutMs ?? 120_000;
-
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pending.delete(id);
-				reject(new Error(`ACP request timed out: ${method}`));
-			}, timeout);
-
-			this.pending.set(id, {
+			const pending: Pending = {
 				resolve,
 				reject,
-				timer,
-			});
+				method,
+			};
+
+			if (opts.timeoutMs > 0) {
+				pending.wallTimer = setTimeout(() => {
+					this.rejectPending(id, new Error(`ACP request timed out: ${method}`));
+				}, opts.timeoutMs);
+				pending.wallTimer.unref?.();
+			}
+
+			if (opts.idleTimeoutMs > 0) {
+				pending.idleTimeoutMs = opts.idleTimeoutMs;
+				pending.idleTimer = this.createIdleTimer(
+					id,
+					method,
+					opts.idleTimeoutMs,
+				);
+			}
+
+			this.pending.set(id, pending);
 
 			const payload = `${JSON.stringify(request)}\n`;
 			this.proc?.stdin?.write(payload, (err) => {
 				if (err) {
-					clearTimeout(timer);
-					this.pending.delete(id);
-					reject(err);
+					this.rejectPending(
+						id,
+						err instanceof Error ? err : new Error(String(err)),
+					);
 				}
 			});
 		});
+	}
+
+	/**
+	 * Reset idle watchdogs on all pending requests that use idle timeouts.
+	 * Called when the agent produces any traffic (notifications / reverse RPC).
+	 */
+	touchActivity(): void {
+		for (const [id, pending] of this.pending) {
+			if (!pending.idleTimeoutMs || pending.idleTimeoutMs <= 0) {
+				continue;
+			}
+			if (pending.idleTimer) {
+				clearTimeout(pending.idleTimer);
+			}
+			pending.idleTimer = this.createIdleTimer(
+				id,
+				pending.method,
+				pending.idleTimeoutMs,
+			);
+		}
 	}
 
 	/**
@@ -206,7 +278,48 @@ export class AcpClient {
 		return Boolean(this.proc && !this.closed);
 	}
 
+	private createIdleTimer(
+		id: JsonRpcId,
+		method: string,
+		idleTimeoutMs: number,
+	): ReturnType<typeof setTimeout> {
+		const timer = setTimeout(() => {
+			this.rejectPending(
+				id,
+				new Error(
+					`ACP request idle timeout: ${method} (no activity for ${idleTimeoutMs}ms)`,
+				),
+			);
+		}, idleTimeoutMs);
+		timer.unref?.();
+		return timer;
+	}
+
+	private rejectPending(id: JsonRpcId, error: Error): void {
+		const pending = this.pending.get(id);
+		if (!pending) {
+			return;
+		}
+		this.clearPendingTimers(pending);
+		this.pending.delete(id);
+		pending.reject(error);
+	}
+
+	private clearPendingTimers(pending: Pending): void {
+		if (pending.wallTimer) {
+			clearTimeout(pending.wallTimer);
+			pending.wallTimer = undefined;
+		}
+		if (pending.idleTimer) {
+			clearTimeout(pending.idleTimer);
+			pending.idleTimer = undefined;
+		}
+	}
+
 	private async handleMessage(msg: JsonRpcMessage): Promise<void> {
+		// Any parseable agent message is a sign of life for idle watchdogs.
+		this.touchActivity();
+
 		const record = msg as unknown as Record<string, unknown>;
 		const hasId =
 			"id" in record && record.id !== undefined && record.id !== null;
@@ -238,7 +351,7 @@ export class AcpClient {
 			if (!pending) {
 				return;
 			}
-			clearTimeout(pending.timer);
+			this.clearPendingTimers(pending);
 			this.pending.delete(response.id);
 			if (response.error) {
 				pending.reject(
@@ -274,7 +387,7 @@ export class AcpClient {
 
 	private failAll(error: Error): void {
 		for (const [, pending] of this.pending) {
-			clearTimeout(pending.timer);
+			this.clearPendingTimers(pending);
 			pending.reject(error);
 		}
 		this.pending.clear();
@@ -287,6 +400,37 @@ export class AcpClient {
 		this.proc = null;
 		this.failAll(new Error("ACP client closed"));
 	}
+}
+
+/**
+ * Resolve wall-clock + idle timeouts from the legacy number form or options object.
+ * Exported for unit tests.
+ */
+export function normalizeTimeoutOptions(
+	timeoutOrOptions: number | AcpRequestTimeoutOptions | undefined,
+	defaultWallMs: number | undefined,
+): { timeoutMs: number; idleTimeoutMs: number } {
+	if (typeof timeoutOrOptions === "number") {
+		return {
+			timeoutMs: timeoutOrOptions,
+			idleTimeoutMs: 0,
+		};
+	}
+	if (timeoutOrOptions && typeof timeoutOrOptions === "object") {
+		const wall =
+			timeoutOrOptions.timeoutMs !== undefined
+				? timeoutOrOptions.timeoutMs
+				: (defaultWallMs ?? 120_000);
+		const idle =
+			timeoutOrOptions.idleTimeoutMs !== undefined
+				? timeoutOrOptions.idleTimeoutMs
+				: 0;
+		return { timeoutMs: wall, idleTimeoutMs: idle };
+	}
+	return {
+		timeoutMs: defaultWallMs ?? 120_000,
+		idleTimeoutMs: 0,
+	};
 }
 
 /**

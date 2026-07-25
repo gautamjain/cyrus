@@ -31,6 +31,7 @@ import { GrokEventMapper } from "./GrokEventMapper.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
 import {
 	GROK_DEFAULT_MODEL_SENTINEL,
+	GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS,
 	type GrokRunnerConfig,
 	type GrokRunnerEvents,
 	type GrokSessionInfo,
@@ -204,6 +205,24 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		return model;
 	}
 
+	/**
+	 * Resolve idle silence budget for `session/prompt`.
+	 * Priority: config → GROK_TURN_IDLE_TIMEOUT_MS → Codex-like 5 min default.
+	 */
+	private resolveTurnIdleTimeoutMs(): number {
+		if (typeof this.config.turnIdleTimeoutMs === "number") {
+			return Math.max(0, this.config.turnIdleTimeoutMs);
+		}
+		const fromEnv = process.env.GROK_TURN_IDLE_TIMEOUT_MS;
+		if (fromEnv !== undefined && fromEnv !== "") {
+			const parsed = Number(fromEnv);
+			if (Number.isFinite(parsed) && parsed >= 0) {
+				return parsed;
+			}
+		}
+		return GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS;
+	}
+
 	private buildAgentArgs(): string[] {
 		const args: string[] = ["agent"];
 		const model = this.resolvedModelId();
@@ -244,12 +263,17 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 		this.logger.debug(`Spawning ACP: ${binary} ${args.join(" ")}`);
 
+		// Control-plane RPCs (initialize / auth / session load) use a wall-clock
+		// bound so a wedged child cannot hang setup forever. Match Codex app-server
+		// default (60s). The agent *turn* uses an idle watchdog instead (see
+		// session/prompt below): activity resets the timer; long productive work
+		// is allowed.
 		const client = new AcpClient({
 			command: binary,
 			args,
 			cwd: workspace,
 			env,
-			requestTimeoutMs: 30 * 60 * 1000,
+			requestTimeoutMs: 60_000,
 			onNotification: (n) => this.handleNotification(n),
 			onStderr: (chunk) => {
 				const text = chunk.trim();
@@ -362,14 +386,25 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			return;
 		}
 
-		this.logger.debug(`session/prompt starting (${prompt.length} chars)`);
+		const turnIdleTimeoutMs = this.resolveTurnIdleTimeoutMs();
+		this.logger.debug(
+			`session/prompt starting (${prompt.length} chars)` +
+				(turnIdleTimeoutMs > 0
+					? ` idleTimeoutMs=${turnIdleTimeoutMs}`
+					: " idleTimeout=disabled"),
+		);
+		// No absolute wall-clock on the turn (unlike the previous 1h hard cap).
+		// Idle-only: any ACP notification or reverse RPC resets the watchdog.
 		const promptResult = (await client.request(
 			"session/prompt",
 			{
 				sessionId,
 				prompt: [{ type: "text", text: prompt }],
 			},
-			60 * 60 * 1000,
+			{
+				timeoutMs: 0,
+				idleTimeoutMs: turnIdleTimeoutMs,
+			},
 		)) as AcpSessionPromptResult;
 
 		if (this.wasStopped) {
