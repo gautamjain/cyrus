@@ -266,6 +266,15 @@ export {
 	LINEAR_WEBHOOK_IPS,
 	WebhookIpValidator,
 } from "./security/index.js";
+// Shell-command matching for scoped `Bash(...)` grants. Shared by the Claude
+// and Grok runners so a command refused on one engine is refused on the other.
+export {
+	commandMatchesAllowedBash,
+	compileBashPattern,
+	grantsUnrestrictedBash,
+	hasBashGrant,
+	splitShellCommands,
+} from "./shell-command-policy.js";
 // Simple Agent Runner types
 export type {
 	IAgentProgressEvent,
