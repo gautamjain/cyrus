@@ -176,6 +176,7 @@ import {
 	SkillsPluginResolver,
 } from "./SkillsPluginResolver.js";
 import { SlackChatAdapter } from "./SlackChatAdapter.js";
+import { getSessionErrorReply } from "./sessionCompletionSummary.js";
 import type { IActivitySink } from "./sinks/IActivitySink.js";
 import { LinearActivitySink } from "./sinks/LinearActivitySink.js";
 import { ToolPermissionResolver } from "./ToolPermissionResolver.js";
@@ -1922,6 +1923,7 @@ ${taskSection}`;
 					summary = textBlock.text;
 				}
 			}
+			summary = getSessionErrorReply(messages) ?? summary;
 
 			const owner = extractRepoOwner(event);
 			const repo = extractRepoName(event);
@@ -2440,6 +2442,7 @@ ${taskSection}`;
 					summary = textBlock.text;
 				}
 			}
+			summary = getSessionErrorReply(messages) ?? summary;
 
 			const projectId = extractProjectId(event);
 			const mrIid = extractMRIid(event);
