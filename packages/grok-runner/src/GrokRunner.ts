@@ -35,6 +35,7 @@ import { GrokEventMapper } from "./GrokEventMapper.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
 import {
 	buildRejectionOutcome,
+	describePermissionRequest,
 	evaluatePermissionRequest,
 	translateToolRules,
 } from "./toolPolicy.js";
@@ -45,6 +46,13 @@ import {
 	type GrokRunnerEvents,
 	type GrokSessionInfo,
 } from "./types.js";
+
+/**
+ * How many times a turn may be restarted after a policy denial before we stop.
+ * One is enough for "you cannot write, so summarise instead"; the cap exists so
+ * an agent that keeps reaching for the same denied tool cannot loop forever.
+ */
+const MAX_DENIAL_CONTINUATIONS = 2;
 
 export declare interface GrokRunner {
 	on<K extends keyof GrokRunnerEvents>(
@@ -89,6 +97,10 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	/** Raw ACP session/update lines when CYRUS_LOG_LEVEL=DEBUG */
 	private acpWireStream: WriteStream | null = null;
 	private logDir: string | null = null;
+	/** Tools refused by policy during the current turn (drives the continuation). */
+	private deniedThisTurn: string[] = [];
+	/** Every policy refusal in this session, surfaced on the result message. */
+	private deniedThisSession: Array<{ tool: string; reason: string }> = [];
 
 	constructor(config: GrokRunnerConfig) {
 		super();
@@ -113,6 +125,7 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		};
 		this.wasStopped = false;
 		this.messages = [];
+		this.deniedThisSession = [];
 		this.activeSessionId = null;
 
 		const workspace = resolve(this.config.workingDirectory || process.cwd());
@@ -380,11 +393,21 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 					return undefined;
 				}
 				const verdict = evaluatePermissionRequest(params, policy);
+				const { hints } = describePermissionRequest(params);
+				const tool = hints[0] ?? "a tool";
+
 				if (verdict.allowed) {
+					// undefined falls through to the client's default auto-approve.
+					this.writeAcpReverseRpcLog(method, params, undefined, "allowed");
 					return undefined;
 				}
+
 				this.logger.info(`Denied a tool permission request: ${verdict.reason}`);
-				return buildRejectionOutcome(params);
+				this.deniedThisTurn.push(tool);
+				this.deniedThisSession.push({ tool, reason: verdict.reason });
+				const response = buildRejectionOutcome(params);
+				this.writeAcpReverseRpcLog(method, params, response, "denied");
+				return response;
 			},
 			onNotification: (n) => this.handleNotification(n),
 			onStderr: (chunk) => {
@@ -501,24 +524,26 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		}
 
 		const turnIdleTimeoutMs = this.resolveTurnIdleTimeoutMs();
+		const turnTimeoutOpts = {
+			// No absolute wall-clock on the turn (unlike the previous 1h hard cap).
+			// Idle-only: any ACP notification or reverse RPC resets the watchdog.
+			timeoutMs: 0,
+			idleTimeoutMs: turnIdleTimeoutMs,
+		};
 		this.logger.debug(
 			`session/prompt starting (${prompt.length} chars)` +
 				(turnIdleTimeoutMs > 0
 					? ` idleTimeoutMs=${turnIdleTimeoutMs}`
 					: " idleTimeout=disabled"),
 		);
-		// No absolute wall-clock on the turn (unlike the previous 1h hard cap).
-		// Idle-only: any ACP notification or reverse RPC resets the watchdog.
-		const promptResult = (await client.request(
+		this.deniedThisTurn = [];
+		let promptResult = (await client.request(
 			"session/prompt",
 			{
 				sessionId,
 				prompt: [{ type: "text", text: prompt }],
 			},
-			{
-				timeoutMs: 0,
-				idleTimeoutMs: turnIdleTimeoutMs,
-			},
+			turnTimeoutOpts,
 		)) as AcpSessionPromptResult;
 
 		if (this.wasStopped) {
@@ -528,8 +553,68 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		this.logger.info(
 			`session/prompt finished stopReason=${promptResult?.stopReason ?? "unknown"}`,
 		);
+
+		// A denied tool ends the turn. Observed on CYR-12: the read-only session
+		// asked to write, was refused, and stopped there — Linear kept only the
+		// half-finished sentence it had streamed before the attempt. The agent
+		// treats the refusal as "the user stopped me", which is right for an
+		// interactive client and wrong for us: the denial is a standing policy,
+		// not a human changing their mind.
+		//
+		// So tell it that, and let it finish with the tools it does have. Bounded,
+		// because an agent that keeps reaching for the same denied tool would
+		// otherwise ping-pong here forever.
+		let continuations = 0;
+		while (
+			this.deniedThisTurn.length > 0 &&
+			continuations < MAX_DENIAL_CONTINUATIONS &&
+			!this.wasStopped
+		) {
+			const denied = [...new Set(this.deniedThisTurn)];
+			this.deniedThisTurn = [];
+			continuations++;
+
+			this.logger.info(
+				`Turn ended after denying ${denied.join(", ")}; asking the agent to continue without it (${continuations}/${MAX_DENIAL_CONTINUATIONS})`,
+			);
+
+			promptResult = (await client.request(
+				"session/prompt",
+				{
+					sessionId,
+					prompt: [
+						{
+							type: "text",
+							text:
+								`Your ${denied.join(" and ")} call was blocked by this session's tool policy. ` +
+								"That is a standing restriction on this session, not a human interrupting you, " +
+								"and retrying it or working around it will not succeed. " +
+								"Continue with the tools you do have and finish your response, " +
+								"reporting what you could not do and why.",
+						},
+					],
+				},
+				turnTimeoutOpts,
+			)) as AcpSessionPromptResult;
+
+			this.logger.info(
+				`continuation prompt finished stopReason=${promptResult?.stopReason ?? "unknown"}`,
+			);
+		}
+
+		if (this.deniedThisTurn.length > 0) {
+			this.logger.info(
+				`Stopping after ${MAX_DENIAL_CONTINUATIONS} continuations; the agent kept requesting denied tools.`,
+			);
+		}
+
+		if (this.wasStopped) {
+			return;
+		}
+
 		this.mapper?.finalize({
 			stopReason: promptResult?.stopReason,
+			permissionDenials: this.deniedThisSession,
 		});
 	}
 
@@ -746,12 +831,39 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	}
 
 	private writeAcpWireLog(update: AcpSessionUpdate): void {
+		this.writeAcpWireEntry({ type: "session-update", update });
+	}
+
+	/**
+	 * Record an agent→client request and the answer we gave it.
+	 *
+	 * Until this existed the wire log held only `session-update` notifications,
+	 * so the permission handshake was invisible: diagnosing CYR-12 meant proving
+	 * a negative from 746 lines that *couldn't* have contained the evidence
+	 * either way. Permission decisions are the one part of a restricted session
+	 * an operator most needs to audit, so they belong on the wire.
+	 */
+	private writeAcpReverseRpcLog(
+		method: string,
+		params: unknown,
+		response: unknown,
+		decision: "allowed" | "denied" | "passthrough",
+	): void {
+		this.writeAcpWireEntry({
+			type: "agent-request",
+			method,
+			decision,
+			params,
+			response,
+		});
+	}
+
+	private writeAcpWireEntry(entry: Record<string, unknown>): void {
 		if (!this.acpWireStream) return;
 		try {
 			this.acpWireStream.write(
 				`${JSON.stringify({
-					type: "session-update",
-					update,
+					...entry,
 					timestamp: new Date().toISOString(),
 				})}\n`,
 			);

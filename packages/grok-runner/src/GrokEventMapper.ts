@@ -429,11 +429,27 @@ export class GrokEventMapper {
 		error?: unknown;
 		stopReason?: string;
 		wasStopped?: boolean;
+		/**
+		 * Tools refused by the client's policy during this session. Reported on
+		 * the result message so a caller can tell "the agent chose not to" apart
+		 * from "the agent was not allowed to" — previously indistinguishable,
+		 * since this field was hard-coded empty even when a write was blocked.
+		 */
+		permissionDenials?: Array<{ tool: string; reason: string }>;
 	}): void {
 		this.suppressUpdates = false;
 		this.flushAssistantText();
 
 		const durationMs = Date.now() - this.startTimestampMs;
+
+		const permissionDenials = (options?.permissionDenials ?? []).map(
+			(denial) => ({
+				tool_name: denial.tool,
+				tool_use_id: null,
+				tool_input: {},
+				reason: denial.reason,
+			}),
+		);
 		const sessionId = this.ctx.getSessionId();
 
 		if (options?.error || options?.wasStopped) {
@@ -457,7 +473,7 @@ export class GrokEventMapper {
 				total_cost_usd: 0,
 				usage: createResultUsage(),
 				modelUsage: {},
-				permission_denials: [],
+				permission_denials: permissionDenials,
 				uuid: crypto.randomUUID(),
 				session_id: sessionId,
 			} as unknown as SDKResultMessage;
@@ -481,7 +497,7 @@ export class GrokEventMapper {
 			total_cost_usd: 0,
 			usage: createResultUsage(),
 			modelUsage: {},
-			permission_denials: [],
+			permission_denials: permissionDenials,
 			uuid: crypto.randomUUID(),
 			session_id: sessionId,
 		} as unknown as SDKResultMessage;
