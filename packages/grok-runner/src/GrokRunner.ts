@@ -34,6 +34,11 @@ import { GrokMessageFormatter } from "./formatter.js";
 import { GrokEventMapper } from "./GrokEventMapper.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
 import {
+	buildRejectionOutcome,
+	evaluatePermissionRequest,
+	translateToolRules,
+} from "./toolPolicy.js";
+import {
 	GROK_DEFAULT_MODEL_SENTINEL,
 	GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS,
 	type GrokRunnerConfig,
@@ -253,14 +258,67 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	}
 
 	private buildAgentArgs(): string[] {
-		const args: string[] = ["agent"];
+		// Permission rules are *global* flags: they must precede the `agent`
+		// subcommand (verified against grok 0.2.111 — an invalid value there is
+		// rejected by the parser, so they are genuinely read in this position).
+		const args: string[] = [];
+		const policy = translateToolRules(
+			this.config.allowedTools,
+			this.config.disallowedTools,
+		);
+		for (const rule of policy.allow) {
+			args.push("--allow", rule);
+		}
+		for (const rule of policy.deny) {
+			args.push("--deny", rule);
+		}
+
+		if (policy.untranslated.length > 0) {
+			// Grok skips unknown tool names with a warning of its own, which is
+			// easy to miss in a container log. Say it plainly: these granted
+			// nothing, so anything relying on them is not actually permitted.
+			this.logger.info(
+				`Tool rules with no Grok equivalent (ignored): ${policy.untranslated.join(", ")}`,
+			);
+		}
+		if (policy.scopedBashUnenforceable) {
+			this.logger.info(
+				"Bash is scoped to specific commands in allowedTools, which Grok cannot enforce with rules alone (deny beats allow) — no blanket Bash deny is sent. The scope is enforced client-side instead: every command in a shell call must match one of the grants, chained commands included.",
+			);
+		}
+		if (policy.deny.length > 0) {
+			// Info, not debug: this is the line that tells an operator what the
+			// session is actually forbidden from doing.
+			this.logger.info(
+				`Grok permission rules — deny: ${policy.deny.join(", ")}${
+					policy.allow.length > 0 ? ` | allow: ${policy.allow.join(", ")}` : ""
+				}`,
+			);
+		}
+
+		args.push("agent");
 		const model = this.resolvedModelId();
 		if (model) {
 			args.push("--model", model);
 		}
+		// `--always-approve` (bypassPermissions) is what keeps an unattended
+		// session from stalling on a prompt — but it is NOT safe to combine with
+		// deny rules, despite the docs saying denials still apply. Verified live
+		// on CYR-9: with `--deny Write` on the command line the agent wrote a file
+		// anyway, and the session's ACP wire log held 746 updates and **zero**
+		// `session/request_permission` calls. The flag short-circuits the rule
+		// engine before deny is consulted, so the agent never even asks.
+		//
+		// With a restriction in force we therefore drop it and let the agent ask;
+		// the client answers immediately from the policy (see `onAgentRequest` in
+		// runSession), so nothing blocks waiting for a human.
 		const alwaysApprove = this.config.alwaysApprove !== false;
-		if (alwaysApprove) {
+		if (alwaysApprove && policy.deny.length === 0) {
 			args.push("--always-approve");
+		} else if (alwaysApprove) {
+			this.logger.info(
+				"Withholding --always-approve: it bypasses the deny rules for this session; permissions are enforced client-side instead.",
+			);
 		}
 		args.push("stdio");
 		return args;
@@ -296,6 +354,10 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		const binary = resolveGrokBinary(this.config.grokPath);
 		const args = this.buildAgentArgs();
 		const env = this.buildChildEnv(workspace);
+		const policy = translateToolRules(
+			this.config.allowedTools,
+			this.config.disallowedTools,
+		);
 
 		this.logger.debug(`Spawning ACP: ${binary} ${args.join(" ")}`);
 
@@ -310,6 +372,20 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			cwd: workspace,
 			env,
 			requestTimeoutMs: 60_000,
+			// Enforce the tool policy where ACP actually puts the decision: here.
+			// Returning undefined falls through to the default auto-approve, which
+			// is what an unrestricted session should keep doing.
+			onAgentRequest: (method, params) => {
+				if (!method.endsWith("request_permission")) {
+					return undefined;
+				}
+				const verdict = evaluatePermissionRequest(params, policy);
+				if (verdict.allowed) {
+					return undefined;
+				}
+				this.logger.info(`Denied a tool permission request: ${verdict.reason}`);
+				return buildRejectionOutcome(params);
+			},
 			onNotification: (n) => this.handleNotification(n),
 			onStderr: (chunk) => {
 				const text = chunk.trim();
@@ -325,7 +401,6 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		});
 		this.client = client;
 		client.start();
-
 		const init = (await client.request("initialize", {
 			protocolVersion: 1,
 			// Do not advertise fs/terminal unless reverse-RPC is implemented.

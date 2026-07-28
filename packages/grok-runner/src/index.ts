@@ -22,6 +22,14 @@ export { GrokEventMapper, projectGrokToolName } from "./GrokEventMapper.js";
 export { GrokRunner } from "./GrokRunner.js";
 export { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
 export {
+	buildRejectionOutcome,
+	describePermissionRequest,
+	evaluatePermissionRequest,
+	type GrokToolPolicy,
+	translateToolRule,
+	translateToolRules,
+} from "./toolPolicy.js";
+export {
 	GROK_DEFAULT_MODEL_SENTINEL,
 	GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS,
 	type GrokRunnerConfig,
