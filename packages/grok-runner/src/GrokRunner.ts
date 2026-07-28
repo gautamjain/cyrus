@@ -207,7 +207,7 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 	/**
 	 * Resolve idle silence budget for `session/prompt`.
-	 * Priority: config → GROK_TURN_IDLE_TIMEOUT_MS → Codex-like 5 min default.
+	 * Priority: config → GROK_TURN_IDLE_TIMEOUT_MS → default 15 min.
 	 */
 	private resolveTurnIdleTimeoutMs(): number {
 		if (typeof this.config.turnIdleTimeoutMs === "number") {

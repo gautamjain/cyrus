@@ -26,8 +26,7 @@ export interface GrokRunnerConfig extends AgentRunnerConfig {
 	alwaysApprove?: boolean;
 	/**
 	 * Fail an in-flight `session/prompt` if Grok produces **no ACP activity**
-	 * for this many milliseconds (default **5 minutes**, same idea as Codex's
-	 * `turnIdleTimeoutMs`).
+	 * for this many milliseconds (default **15 minutes** / `900_000`).
 	 *
 	 * Any agent traffic resets the timer: `session/update` notifications,
 	 * reverse RPCs (`session/request_permission`, …). Productive multi-hour
@@ -41,10 +40,11 @@ export interface GrokRunnerConfig extends AgentRunnerConfig {
 }
 
 /**
- * Default idle silence before failing `session/prompt` (Codex default: 5 min).
+ * Default idle silence before failing `session/prompt` (15 min).
  * Wall-clock turn limits are intentionally not used for prompts.
+ * Override via config `turnIdleTimeoutMs` or env `GROK_TURN_IDLE_TIMEOUT_MS`.
  */
-export const GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS = 300_000;
+export const GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS = 900_000;
 
 export interface GrokSessionInfo extends AgentSessionInfo {
 	sessionId: string | null;

@@ -37,11 +37,11 @@ describe("normalizeTimeoutOptions", () => {
 });
 
 describe("idle timeout semantics (documented contract)", () => {
-	it("matches Codex default of 5 minutes for turn idle", async () => {
+	it("defaults turn idle timeout to 15 minutes", async () => {
 		const { GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS } = await import(
 			"../src/types.js"
 		);
-		expect(GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS).toBe(300_000);
+		expect(GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS).toBe(900_000);
 	});
 
 	it("idle timer can be re-armed after activity (fake timers)", () => {
