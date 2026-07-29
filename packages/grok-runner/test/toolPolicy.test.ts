@@ -123,13 +123,59 @@ describe("translateToolRules", () => {
 		expect(policy.deny).toEqual([]);
 	});
 
-	it("does not restrict when an allow-list translates to nothing", () => {
-		// Every entry was dropped, so we know nothing about intent — inventing a
-		// deny-all here would break sessions rather than secure them.
-		const policy = translateToolRules(["Task", "Skill"]);
+	it("still restricts when an allow-list translates to nothing", () => {
+		// The operator restricted this persona. That every entry happens to have
+		// no Grok equivalent says nothing about intent, and reading it as
+		// "unrestricted" inverted the setting: measured on the planning persona
+		// `["Task","Skill","TaskCreate","TaskUpdate","ToolSearch"]`, all five
+		// dropped, `deny` came back empty, and `GrokRunner` then also passed
+		// `--always-approve` because it gates on an empty deny list. A restricted
+		// session became one that never asks permission at all.
+		const policy = translateToolRules([
+			"Task",
+			"Skill",
+			"TaskCreate",
+			"TaskUpdate",
+			"ToolSearch",
+		]);
 		expect(policy.allow).toEqual([]);
-		expect(policy.deny).toEqual([]);
-		expect(policy.untranslated).toEqual(["Task", "Skill"]);
+		expect(policy.deny).toEqual(["Edit", "Write", "NotebookEdit", "Bash"]);
+		expect(policy.untranslated).toEqual([
+			"Task",
+			"Skill",
+			"TaskCreate",
+			"TaskUpdate",
+			"ToolSearch",
+		]);
+	});
+
+	it("distinguishes 'allow-list configured' from 'allow-list survived'", () => {
+		// No allow-list at all is the genuine unrestricted case.
+		expect(translateToolRules(undefined).deny).toEqual([]);
+		expect(translateToolRules([]).deny).toEqual([]);
+		expect(translateToolRules(["  "]).deny).toEqual([]);
+		// One untranslatable entry is a restriction.
+		expect(translateToolRules(["Task"]).deny).toEqual([
+			"Edit",
+			"Write",
+			"NotebookEdit",
+			"Bash",
+		]);
+	});
+
+	it("reports `restricted` from configured intent, not from what survived", () => {
+		// `GrokRunner` gates `--always-approve` on this. It must say "restricted"
+		// for a policy whose every rule evaporated in translation — that session
+		// is the one that must not get the flag that bypasses the rule engine.
+		expect(translateToolRules(undefined).restricted).toBe(false);
+		expect(translateToolRules([]).restricted).toBe(false);
+		expect(translateToolRules(["Task", "Skill"]).restricted).toBe(true);
+		expect(translateToolRules(["Read", "Glob"]).restricted).toBe(true);
+		// A scoped-Bash reviewer is restricted even though no blanket Bash deny
+		// is sent for it.
+		expect(translateToolRules(["Read", "Bash(git diff:*)"]).restricted).toBe(
+			true,
+		);
 	});
 
 	it("de-duplicates repeated rules", () => {

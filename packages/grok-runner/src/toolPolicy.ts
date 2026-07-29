@@ -25,7 +25,19 @@
  *
  * So: when an allow-list is in force, every mutating tool class *not* in it is
  * denied explicitly. That is the same shape as Grok's own documented read-only
- * reviewer example (allow read + grep, deny edit + bash).
+ * reviewer example (allow read + grep, deny edit + bash). "In force" means the
+ * operator configured a list — not that the list survived translation. Reading
+ * it the other way turned a persona whose every rule had no Grok equivalent
+ * into an unrestricted session; see the note on `restricted` below.
+ *
+ * ## Nothing the agent says decides anything
+ *
+ * The client-side half of this module (`evaluatePermissionRequest` onward)
+ * exists because the Grok CLI did not honour its own deny rules. Having taken
+ * the decision away from that process, it must not hand it back: a
+ * self-declared `read_only` flag, a `__` in a free-text label, and a tool name
+ * nobody has seen before are all treated as unproven rather than as safe. Each
+ * of those three was a measured bypass before it was closed.
  *
  * Reference: the Grok CLI's bundled `docs/user-guide/22-permissions-and-safety.md`
  * ("Tool Names", "MCP Rules", "Example Configurations").
@@ -74,6 +86,16 @@ export interface GrokToolPolicy {
 	deny: string[];
 	/** Input entries with no Grok equivalent; dropped, reported for logging. */
 	untranslated: string[];
+	/**
+	 * True when the operator configured an allow-list at all.
+	 *
+	 * This is the operator's *intent*, read from the configured list rather than
+	 * from what survived translation or from `deny.length`. Callers deciding
+	 * whether to relax anything for an unattended session must gate on this:
+	 * `deny.length === 0` used to stand in for it, and a policy whose every rule
+	 * evaporated in translation therefore read as "no restriction configured".
+	 */
+	restricted: boolean;
 	/**
 	 * True when the allow-list scopes Bash to specific commands (e.g.
 	 * `Bash(git:*)`). Grok evaluates deny before allow, so a blanket `Bash` deny
@@ -160,7 +182,23 @@ export function translateToolRules(
 	}
 
 	// No allow-list means "unrestricted" in Cyrus — only explicit denies apply.
-	const restricted = allow.length > 0;
+	//
+	// Derived from the *configured* list, not the translated one. `allow` counts
+	// rules that survived translation, and translation drops everything Grok does
+	// not know: a planning persona allowed `["Task","Skill","TaskCreate",
+	// "TaskUpdate","ToolSearch"]` translates to nothing at all, so an
+	// `allow.length > 0` test read that session as unrestricted, emitted no
+	// denies, and — because `GrokRunner` gates `--always-approve` on an empty
+	// deny list — also handed it back the blanket approval. An operator who
+	// restricted a persona got a fully unrestricted one, with a warning line as
+	// the only signal. That is precisely the failure this module's docblock names.
+	//
+	// An allow-list that translates to nothing must deny everything mutating,
+	// not nothing.
+	const configuredAllow = (allowedTools ?? [])
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0);
+	const restricted = configuredAllow.length > 0;
 	let scopedBashUnenforceable = false;
 
 	if (restricted) {
@@ -185,7 +223,7 @@ export function translateToolRules(
 		}
 	}
 
-	return { allow, deny, untranslated, scopedBashUnenforceable };
+	return { allow, deny, untranslated, scopedBashUnenforceable, restricted };
 }
 
 /* -------------------------------------------------------------------------
@@ -217,6 +255,8 @@ const MUTATING_TOOL_HINTS = new Set([
 	// Grok/opencode tool names seen on the wire
 	"write",
 	"search_replace",
+	"str_replace",
+	"str_replace_editor",
 	"create_file",
 	"apply_patch",
 	"notebook_edit",
@@ -224,6 +264,60 @@ const MUTATING_TOOL_HINTS = new Set([
 	"run_terminal_command",
 	"run_command",
 	"shell",
+	"terminal",
+]);
+
+/**
+ * Grok/ACP tool identifiers Cyrus recognises as incapable of mutating.
+ *
+ * This is the list that decides, not {@link MUTATING_TOOL_HINTS}. The two are
+ * not symmetric and the asymmetry is the point:
+ *
+ * A name blocklist has to be complete to be worth anything, and this one cannot
+ * be — measured, a tool called `str_replace_editor` sailed past it, and any
+ * write tool Grok renames or adds does the same. So the verdict is inverted: a
+ * hint on the mutating list is denied, a hint on *this* list is allowed, and a
+ * call that matches neither is denied. That is what "a request we cannot
+ * classify is denied" means, and it is what the module docblock always claimed.
+ *
+ * The cost is over-blocking a genuinely read-only tool Cyrus has not seen yet.
+ * That is the failure we want: it appears in the session transcript as a
+ * refusal, where an operator can read it and add the name here. The other
+ * direction is a silent write.
+ *
+ * Note the ACP `kind` field would classify most calls correctly on its own, but
+ * `describePermissionRequest` documents that shape as non-contractual — so it
+ * is read as one hint among several rather than leaned on.
+ */
+const READ_ONLY_TOOL_HINTS = new Set([
+	// ACP ToolKind values that cannot mutate
+	"read",
+	"search",
+	"think",
+	"fetch",
+	// Grok/opencode tool names seen on the wire
+	"ls",
+	"list",
+	"list_dir",
+	"list_directory",
+	"read_file",
+	"view",
+	"view_file",
+	"cat",
+	"grep",
+	"glob",
+	"grep_search",
+	"file_search",
+	"codebase_search",
+	"semantic_search",
+	"web_search",
+	"web_fetch",
+	"webfetch",
+	"websearch",
+	"todo_read",
+	"todoread",
+	"oracle",
+	"thinking",
 ]);
 
 /** Which rule name a mutating tool should be checked against. */
@@ -251,6 +345,12 @@ function ruleNamesForHint(hint: string): string[] {
  */
 export function describePermissionRequest(params: unknown): {
 	hints: string[];
+	/**
+	 * Whether the *agent* declared this call read-only.
+	 *
+	 * Reported for logging only. It is deliberately not an input to
+	 * {@link evaluatePermissionRequest}: see the note there.
+	 */
 	explicitlyReadOnly: boolean;
 	mcpServer?: string;
 	/** The shell command, when this is a Bash-class call. */
@@ -273,8 +373,22 @@ export function describePermissionRequest(params: unknown): {
 	const hints = raw.map((s) => s.toLowerCase());
 
 	// An MCP tool call is named `server__tool`; the rule form is MCPTool(...).
+	//
+	// Matched against the *name* fields only. Matching every raw string meant a
+	// `label` or `title` containing `__` routed the call into the MCP branch,
+	// which allows unless the server is denied: measured, a tool named
+	// `search__replace` with kind `edit` came back allowed, on the strength of a
+	// server called "search" that does not exist. `search_replace` is on the
+	// mutating list — one extra underscore skipped every mutation check.
+	//
+	// A name that is itself a known mutating tool is never read as an MCP call,
+	// so a tool named `apply__patch` cannot launder itself either.
 	let mcpServer: string | undefined;
-	for (const value of raw) {
+	const nameFields = [xai.name, toolCall.name].filter(
+		(v): v is string => typeof v === "string" && v.length > 0,
+	);
+	for (const value of nameFields) {
+		if (MUTATING_TOOL_HINTS.has(value.toLowerCase())) continue;
 		const match = value.match(/^([A-Za-z0-9_.-]+?)__[A-Za-z0-9_.-]+$/);
 		if (match?.[1]) {
 			mcpServer = match[1];
@@ -304,6 +418,25 @@ export function describePermissionRequest(params: unknown): {
  * is denied. A guardrail that quietly allows the calls it does not recognise is
  * not a guardrail — and over-blocking surfaces loudly in the session transcript,
  * where it can be fixed, rather than silently letting a write through.
+ *
+ * ## Everything the agent says is treated as hostile
+ *
+ * This module exists because the Grok CLI did not honour its own deny rules.
+ * Enforcement moved to the client precisely so the decision stops depending on
+ * that process — so nothing the agent asserts about a call can be the reason it
+ * is permitted:
+ *
+ * - `_meta["x.ai/tool"].read_only` is **not** consulted. It used to
+ *   short-circuit ahead of the deny rules, and it was set by the same process
+ *   being restricted. Measured, for a `readOnly` persona denying `Write`: an
+ *   honest write was refused, and the identical write with `read_only: true`
+ *   was allowed. One self-declared flag, opposite verdicts. A tool is treated
+ *   as read-only only when its *name or kind* is on a list Cyrus controls
+ *   ({@link READ_ONLY_TOOL_HINTS}).
+ * - A `server__tool` shape is read from the name fields only, never from a
+ *   free-text label, and never when the name is a known mutating tool.
+ * - The mutating check runs **before** the MCP branch, so no naming trick
+ *   routes a write around it.
  */
 export function evaluatePermissionRequest(
 	params: unknown,
@@ -313,13 +446,8 @@ export function evaluatePermissionRequest(
 		return { allowed: true, reason: "no restriction in force" };
 	}
 
-	const { hints, explicitlyReadOnly, mcpServer, command } =
-		describePermissionRequest(params);
+	const { hints, mcpServer, command } = describePermissionRequest(params);
 	const allow = policy.allow ?? [];
-
-	if (explicitlyReadOnly) {
-		return { allowed: true, reason: "tool reports read_only" };
-	}
 
 	// A deny rule with no argument (`Write`, `Bash`) denies the whole tool
 	// class. A *scoped* rule (`Bash(sed:*)`) denies only the commands it names
@@ -338,20 +466,15 @@ export function evaluatePermissionRequest(
 		return head === "Bash" && args !== undefined;
 	});
 
-	if (mcpServer) {
-		const blocked = policy.deny.some((rule) => {
-			const { head, args } = splitRule(rule);
-			if (head !== "MCPTool" || !args) return false;
-			const server = args.split("__")[0];
-			return server === "*" || server === mcpServer;
-		});
-		return blocked
-			? { allowed: false, reason: `MCP server '${mcpServer}' is denied` }
-			: { allowed: true, reason: `MCP server '${mcpServer}' is not denied` };
-	}
+	// The mutating check runs first, and the *first* mutating hint decides. That
+	// was already true — every branch below returned — but the `for` shape read
+	// as though it checked all of them, so a future edit that dropped a `return`
+	// would change behaviour silently. Stating it as a `find` makes the rule
+	// visible: order of `raw` in `describePermissionRequest` decides.
+	const mutatingHint = hints.find((hint) => MUTATING_TOOL_HINTS.has(hint));
 
-	for (const hint of hints) {
-		if (!MUTATING_TOOL_HINTS.has(hint)) continue;
+	if (mutatingHint) {
+		const hint = mutatingHint;
 		for (const ruleName of ruleNamesForHint(hint)) {
 			if (blanketDenied.has(ruleName)) {
 				return { allowed: false, reason: `${ruleName} is denied (${hint})` };
@@ -422,13 +545,39 @@ export function evaluatePermissionRequest(
 		return { allowed: true, reason: `${hint} is not denied` };
 	}
 
+	// MCP calls are checked *after* the mutating hints, so a `server__tool`
+	// shape can no longer be used to skip them.
+	if (mcpServer) {
+		const blocked = policy.deny.some((rule) => {
+			const { head, args } = splitRule(rule);
+			if (head !== "MCPTool" || !args) return false;
+			const server = args.split("__")[0];
+			return server === "*" || server === mcpServer;
+		});
+		return blocked
+			? { allowed: false, reason: `MCP server '${mcpServer}' is denied` }
+			: { allowed: true, reason: `MCP server '${mcpServer}' is not denied` };
+	}
+
 	if (hints.length === 0) {
 		return { allowed: false, reason: "unidentifiable tool call (fail closed)" };
 	}
-	// Non-mutating and unrecognised (e.g. "think", "fetch"): let it through.
+
+	// Not mutating, not MCP: allowed only if Cyrus recognises it as read-only.
+	// Anything else is a name we have never seen, and the whole reason this
+	// module exists is that a name we have never seen may well be a write —
+	// `str_replace_editor` was allowed by the old "no mutating signal" rule.
+	const readOnlyHint = hints.find((hint) => READ_ONLY_TOOL_HINTS.has(hint));
+	if (readOnlyHint) {
+		return {
+			allowed: true,
+			reason: `recognised read-only tool (${readOnlyHint})`,
+		};
+	}
+
 	return {
-		allowed: true,
-		reason: `no mutating signal in [${hints.join(", ")}]`,
+		allowed: false,
+		reason: `unclassified tool call, denied (fail closed): [${hints.join(", ")}]`,
 	};
 }
 
@@ -436,6 +585,15 @@ export function evaluatePermissionRequest(
  * Build the ACP response that refuses a permission request, preferring an
  * explicit reject option when the agent offers one and falling back to
  * cancelling the call.
+ *
+ * `kind` is checked across **all** options before any name is considered, and
+ * an option whose `kind` says allow is never selectable. The previous version
+ * used one `find` over a predicate that included a bare `name.includes("no")`,
+ * and `find` takes the first option matching *anything*: given
+ * `[{kind:"allow_once", name:"Allow now"}, {kind:"reject_once", name:"Reject"}]`
+ * it selected the allow option, because "Allow now" contains "no". A denial that
+ * returns an approval is worse than no enforcement, because it reads as
+ * enforcement in the log.
  */
 export function buildRejectionOutcome(params: unknown): unknown {
 	const p = (params ?? {}) as {
@@ -447,20 +605,35 @@ export function buildRejectionOutcome(params: unknown): unknown {
 		}>;
 	};
 	const options = Array.isArray(p.options) ? p.options : [];
-	const reject = options.find((o) => {
-		const kind = (o.kind || "").toLowerCase();
-		const name = (o.name || "").toLowerCase();
-		return (
-			kind.startsWith("reject") ||
-			kind === "deny" ||
-			name.includes("reject") ||
-			name.includes("deny") ||
-			name.includes("no")
-		);
+
+	const kindOf = (o: { kind?: string }) => (o.kind || "").toLowerCase();
+	const isAllowKind = (o: { kind?: string }) => {
+		const kind = kindOf(o);
+		return kind.startsWith("allow") || kind === "approve" || kind === "accept";
+	};
+
+	// 1. A contractual reject kind, anywhere in the list.
+	const byKind = options.find((o) => {
+		const kind = kindOf(o);
+		return kind.startsWith("reject") || kind === "deny" || kind === "cancel";
 	});
+
+	// 2. Only if no option carries a usable kind, fall back to the label — and
+	//    never to a label on an option that declares itself an approval. Whole
+	//    words only: "no" as a substring matches "Allow now".
+	const byName = options.some((o) => kindOf(o).length > 0)
+		? undefined
+		: options.find((o) => {
+				if (isAllowKind(o)) return false;
+				const name = (o.name || "").toLowerCase();
+				return /\b(reject|deny|decline|refuse|no|never)\b/.test(name);
+			});
+
+	const reject = byKind ?? byName;
 	const optionId = reject?.optionId || reject?.option_id;
 	if (optionId) {
 		return { outcome: { outcome: "selected", optionId } };
 	}
+	// No usable reject option: cancelling the call is the refusal.
 	return { outcome: { outcome: "cancelled" } };
 }

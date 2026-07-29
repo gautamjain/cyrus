@@ -258,10 +258,80 @@ describe("evaluatePermissionRequest", () => {
 
 	it("allows MCP calls to a granted server and denies a denied one", () => {
 		const policy = translateToolRules(["Read"], ["mcp__github"]);
-		const linear = { toolCall: { title: "linear__save_comment" } };
-		const github = { toolCall: { title: "github__create_pr" } };
+		const linear = { toolCall: { name: "linear__save_comment" } };
+		const github = { toolCall: { name: "github__create_pr" } };
 		expect(evaluatePermissionRequest(linear, policy).allowed).toBe(true);
 		expect(evaluatePermissionRequest(github, policy).allowed).toBe(false);
+	});
+
+	it("reads the MCP shape from a name field, not from a free-text label", () => {
+		// `mcpServer` used to be matched against every raw string, and the MCP
+		// branch allows by default. So a mutating tool only had to carry a `__`
+		// somewhere in its label to skip every mutation check.
+		const policy = translateToolRules(["Read"], ["mcp__github"]);
+		const disguised = {
+			toolCall: { name: "search__replace", kind: "edit", title: "Edit file" },
+		};
+		const verdict = evaluatePermissionRequest(disguised, policy);
+		expect(verdict.allowed).toBe(false);
+		expect(verdict.reason).not.toContain("MCP server");
+
+		// A `__` in the title alone does not make the call an MCP call.
+		const titled = { toolCall: { title: "linear__save_comment" } };
+		expect(evaluatePermissionRequest(titled, policy).allowed).toBe(false);
+	});
+
+	it("never treats a known mutating name as an MCP call", () => {
+		const policy = translateToolRules(["Read"]);
+		const req = { toolCall: { name: "search_replace" } };
+		expect(evaluatePermissionRequest(req, policy).allowed).toBe(false);
+	});
+
+	it("ignores the agent's own read_only claim", () => {
+		// Same call, one self-declared flag, opposite verdicts — on a field set by
+		// the process being restricted. The whole reason enforcement moved to the
+		// client is that this process does not honour its own rules.
+		const policy = translateToolRules(["Read", "Glob", "Grep"]);
+		const honest = {
+			toolCall: { _meta: { "x.ai/tool": { name: "write", kind: "edit" } } },
+		};
+		const lying = {
+			toolCall: {
+				_meta: {
+					"x.ai/tool": { name: "write", kind: "edit", read_only: true },
+				},
+			},
+		};
+
+		expect(evaluatePermissionRequest(honest, policy).allowed).toBe(false);
+		expect(evaluatePermissionRequest(lying, policy).allowed).toBe(false);
+	});
+
+	it("denies a write tool whose name Cyrus has never seen", () => {
+		// The old rule allowed anything with "no mutating signal", so an
+		// unrecognised name was an allow. `str_replace_editor` was measured
+		// passing. The verdict is now inverted: recognised read-only names are
+		// allowed, everything else is refused.
+		const policy = translateToolRules(["Read", "Glob", "Grep"]);
+		expect(
+			evaluatePermissionRequest(
+				{ toolCall: { name: "some_future_write_tool" } },
+				policy,
+			).allowed,
+		).toBe(false);
+	});
+
+	it("still allows the read-only tools it recognises", () => {
+		const policy = translateToolRules(["Read", "Glob", "Grep"]);
+		for (const name of ["read_file", "grep", "glob", "ls", "web_search"]) {
+			expect(
+				evaluatePermissionRequest({ toolCall: { name } }, policy).allowed,
+				`expected ${name} to be allowed`,
+			).toBe(true);
+		}
+		expect(
+			evaluatePermissionRequest({ toolCall: { kind: "read" } }, policy).allowed,
+		).toBe(true);
 	});
 
 	it("fails closed on an unidentifiable request", () => {
@@ -356,6 +426,50 @@ describe("buildRejectionOutcome", () => {
 
 	it("cancels when no reject option is advertised", () => {
 		expect(buildRejectionOutcome({ options: [] })).toEqual({
+			outcome: { outcome: "cancelled" },
+		});
+	});
+
+	it("never selects an approve option", () => {
+		// "Allow now" contains "no". The old predicate matched on a bare
+		// `name.includes("no")` and `find` took the first option matching
+		// anything, so the denial returned the ALLOW option — enforcement that
+		// reads as enforcement in the log while approving the call.
+		const options = [
+			{ optionId: "a", kind: "allow_once", name: "Allow now" },
+			{ optionId: "b", kind: "reject_once", name: "Reject" },
+		];
+		expect(buildRejectionOutcome({ options })).toEqual({
+			outcome: { outcome: "selected", optionId: "b" },
+		});
+	});
+
+	it("prefers kind over name across the whole option list", () => {
+		const options = [
+			{ optionId: "a", kind: "allow_always", name: "Deny-looking label" },
+			{ optionId: "b", kind: "reject_always", name: "Whatever" },
+		];
+		expect(buildRejectionOutcome({ options })).toEqual({
+			outcome: { outcome: "selected", optionId: "b" },
+		});
+	});
+
+	it("falls back to the label only when no option carries a kind", () => {
+		const options = [
+			{ optionId: "a", name: "Allow now" },
+			{ optionId: "b", name: "No, reject this" },
+		];
+		expect(buildRejectionOutcome({ options })).toEqual({
+			outcome: { outcome: "selected", optionId: "b" },
+		});
+	});
+
+	it("cancels rather than guessing when only approve options exist", () => {
+		const options = [
+			{ optionId: "a", kind: "allow_once", name: "Allow now" },
+			{ optionId: "b", kind: "allow_always", name: "Always allow" },
+		];
+		expect(buildRejectionOutcome({ options })).toEqual({
 			outcome: { outcome: "cancelled" },
 		});
 	});

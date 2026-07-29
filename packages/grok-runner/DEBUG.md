@@ -117,3 +117,43 @@ Redact tokens from `.env` / MCP headers before sharing.
 | `session-grok-*.jsonl` | Did we emit correct tool_use / result for Linear? |
 | `acp-wire-*.jsonl` | Did Grok send the update and we mis-mapped it? |
 | `~/.grok/sessions` | Did Grok itself fail or succeed? |
+
+---
+
+## Open measurement — does Grok ask when the flag is withheld?
+
+**Status: unmeasured. This is the one load-bearing claim in the Grok tool
+policy that has no wire log behind it.**
+
+What *is* measured (CYR-9) is the negative case: with `--always-approve`, the
+agent wrote a file despite `--deny Write`, and the session's wire log held 746
+updates and **zero** `session/request_permission` requests. That is why
+enforcement moved to the client.
+
+The whole client-side design then rests on the positive case: that withholding
+the flag makes the agent ask. Nobody has captured a wire log showing a
+permission request arriving for a `bash` call.
+
+It matters most for **scoped Bash** sessions (`Bash(git diff:*)`-shaped
+grants). For those, `translateToolRules` deliberately sends no blanket `Bash`
+deny — deny beats allow in Grok's rule engine, so a blanket deny would also
+refuse the commands the allow-list grants. So the client-side handshake is the
+*only* thing enforcing the scope. If Grok skips the handshake for calls it
+classifies as read-only — which is exactly what Claude Code was measured doing
+in CYR-25 — then the session runs with `--allow Bash(git diff:*)` and nothing
+behind it. `GrokRunner` logs a WARN for every such session for this reason.
+
+To close it:
+
+```bash
+# A scoped-Bash session: allow only `git diff`, then ask for something else.
+CYRUS_GROK_ACP_WIRE_LOG=1 <run a session with allowedTools ["Read","Bash(git diff:*)"]>
+# Prompt it to run `git status`, then grep the wire log:
+grep -c 'session/request_permission' ~/.cyrus/logs/**/acp-wire-grok-*.jsonl
+```
+
+- **≥ 1** → the handshake happens; scoped Bash is enforced. Record the log
+  reference here and drop the WARN in `GrokRunner.buildArgs` to INFO.
+- **0** → scoped Bash is unenforced on Grok. The grant shape must then be
+  rejected for this runner rather than silently accepted, and the OS sandbox
+  becomes the only boundary.

@@ -295,8 +295,15 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			);
 		}
 		if (policy.scopedBashUnenforceable) {
-			this.logger.info(
-				"Bash is scoped to specific commands in allowedTools, which Grok cannot enforce with rules alone (deny beats allow) — no blanket Bash deny is sent. The scope is enforced client-side instead: every command in a shell call must match one of the grants, chained commands included.",
+			// Warn, not info. For these sessions the client-side handshake is the
+			// ONLY thing enforcing the Bash scope — no blanket Bash deny is sent,
+			// because deny beats allow and would refuse the granted commands too.
+			// So if Grok ever skips `session/request_permission` for a call it
+			// classifies as read-only (which is exactly what Claude Code was
+			// measured doing in CYR-25), the scope is unenforced and this line is
+			// the only warning in the log. See `DEBUG.md` — "Open measurement".
+			this.logger.warn(
+				"Bash is scoped to specific commands in allowedTools, which Grok cannot enforce with rules alone (deny beats allow) — no blanket Bash deny is sent. The scope is enforced ENTIRELY client-side: every command in a shell call must match one of the grants, chained commands included. If the agent does not ask, nothing else refuses it.",
 			);
 		}
 		if (policy.deny.length > 0) {
@@ -325,8 +332,14 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		// With a restriction in force we therefore drop it and let the agent ask;
 		// the client answers immediately from the policy (see `onAgentRequest` in
 		// runSession), so nothing blocks waiting for a human.
+		//
+		// Gated on `policy.restricted` — the operator's configured intent — not on
+		// `policy.deny.length`. Those differed in the one case that mattered: an
+		// allow-list whose every entry has no Grok equivalent translated to an
+		// empty deny list, so a restricted persona was handed the flag that
+		// bypasses the rule engine outright.
 		const alwaysApprove = this.config.alwaysApprove !== false;
-		if (alwaysApprove && policy.deny.length === 0) {
+		if (alwaysApprove && !policy.restricted && policy.deny.length === 0) {
 			args.push("--always-approve");
 		} else if (alwaysApprove) {
 			this.logger.info(
