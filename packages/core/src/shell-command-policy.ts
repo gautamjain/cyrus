@@ -17,7 +17,7 @@
  */
 
 /** Split `Name(args)` into its head and the parenthesised remainder. */
-function splitRule(rule: string): { head: string; args?: string } {
+export function splitRule(rule: string): { head: string; args?: string } {
 	const match = rule.match(/^([A-Za-z*][A-Za-z0-9_]*)(\((.*)\))?$/s);
 	if (!match?.[1]) {
 		return { head: "" };

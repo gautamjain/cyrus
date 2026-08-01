@@ -47,21 +47,12 @@ import {
 	commandMatchesAllowedBash,
 	grantsUnrestrictedBash,
 	hasBashGrant,
+	splitRule,
 	splitShellCommands,
 } from "cyrus-core";
 
-// The shell-command matching below used to live here. It is engine-agnostic —
-// string matching over a shell command and a list of `Bash(...)` grants — and
-// `ClaudeRunner` needs exactly the same behaviour to enforce the same grants
-// through its `canUseTool` callback (CYR-20). It now lives in `cyrus-core` so
-// both runners share one implementation; a command refused on Grok is refused
-// on Claude. Re-exported here so this module's surface is unchanged.
 export { splitShellCommands };
 
-/**
- * Tool names Grok's rule parser recognizes. Anything else is dropped by Grok
- * with a warning, so we surface it instead of pretending it applied.
- */
 const RECOGNIZED_TOOL_NAMES = new Set([
 	"Bash",
 	"Read",
@@ -111,15 +102,6 @@ export interface GrokToolPolicy {
 	 * which is not bound by that ordering.
 	 */
 	scopedBashUnenforceable: boolean;
-}
-
-/** Split `Name(args)` into its head and the parenthesised remainder. */
-function splitRule(rule: string): { head: string; args?: string } {
-	const match = rule.match(/^([A-Za-z*][A-Za-z0-9_]*)(\((.*)\))?$/s);
-	if (!match?.[1]) {
-		return { head: "" };
-	}
-	return { head: match[1], args: match[3] };
 }
 
 /**
@@ -469,26 +451,24 @@ export function evaluatePermissionRequest(
 	// started deriving scoped `Bash(...)` denies, reading their head as a
 	// blanket "Bash" made a readOnly persona refuse its own
 	// `Bash(git -C * pull)` grant, i.e. every shell command it had.
-	const blanketDenied = new Set(
-		policy.deny
-			.filter((rule) => splitRule(rule).args === undefined)
-			.map((rule) => splitRule(rule).head),
-	);
-	const scopedBashDenies = policy.deny.filter((rule) => {
+	const blanketDenied = new Set<string>();
+	const scopedBashDenies: string[] = [];
+	for (const rule of policy.deny) {
 		const { head, args } = splitRule(rule);
-		return head === "Bash" && args !== undefined;
-	});
+		if (args === undefined) {
+			if (head) blanketDenied.add(head);
+		} else if (head === "Bash") {
+			scopedBashDenies.push(rule);
+		}
+	}
 
-	// The mutating check runs first, and the *first* mutating hint decides. That
-	// was already true — every branch below returned — but the `for` shape read
-	// as though it checked all of them, so a future edit that dropped a `return`
-	// would change behaviour silently. Stating it as a `find` makes the rule
-	// visible: order of `raw` in `describePermissionRequest` decides.
 	const mutatingHint = hints.find((hint) => MUTATING_TOOL_HINTS.has(hint));
 
 	if (mutatingHint) {
 		const hint = mutatingHint;
-		for (const ruleName of ruleNamesForHint(hint)) {
+		const ruleNames = ruleNamesForHint(hint);
+		const isBash = ruleNames.includes("Bash");
+		for (const ruleName of ruleNames) {
 			if (blanketDenied.has(ruleName)) {
 				return { allowed: false, reason: `${ruleName} is denied (${hint})` };
 			}
@@ -499,10 +479,7 @@ export function evaluatePermissionRequest(
 		// the `sed` rule while a bare `git pull` still runs. Deny is checked
 		// before the allow-list so it wins, matching the Claude path where the
 		// SDK evaluates deny rules ahead of everything else.
-		if (
-			ruleNamesForHint(hint).includes("Bash") &&
-			scopedBashDenies.length > 0
-		) {
+		if (isBash && scopedBashDenies.length > 0) {
 			if (!command) {
 				return {
 					allowed: false,
@@ -538,7 +515,7 @@ export function evaluatePermissionRequest(
 		// A scoped grant like `Bash(git diff:*)` is meant to permit *only* those
 		// commands, so anything outside the grant is refused — deny rules alone
 		// cannot express that, because deny beats allow in the rule engine.
-		if (ruleNamesForHint(hint).includes("Bash") && allow.length > 0) {
+		if (isBash && allow.length > 0) {
 			if (!command) {
 				return {
 					allowed: false,
