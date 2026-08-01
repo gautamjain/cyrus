@@ -9,7 +9,6 @@ import {
 } from "cyrus-slack-event-transport";
 import type { ChatRepositoryProvider } from "./ChatRepositoryProvider.js";
 import type { ChatPlatformAdapter } from "./ChatSessionHandler.js";
-import { getSessionErrorReply } from "./sessionCompletionSummary.js";
 
 /**
  * Sentinel the agent emits when it has decided a Slack message does not warrant
@@ -297,7 +296,6 @@ Supported mrkdwn syntax:
 					summary = textBlock.text;
 				}
 			}
-			summary = getSessionErrorReply(messages) ?? summary;
 
 			// The agent emits the no-response sentinel when it judged this message
 			// didn't warrant a reply (see the "When to Respond" system prompt
