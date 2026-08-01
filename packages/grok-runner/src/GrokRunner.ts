@@ -924,6 +924,8 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			this.mapper.finalize({
 				error,
 				wasStopped: this.wasStopped,
+				// Keep audit trail when the session dies mid-turn after a deny.
+				permissionDenials: this.deniedThisSession,
 			});
 		}
 

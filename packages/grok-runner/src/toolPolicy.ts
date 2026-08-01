@@ -43,7 +43,12 @@
  * ("Tool Names", "MCP Rules", "Example Configurations").
  */
 
-import { commandMatchesAllowedBash, splitShellCommands } from "cyrus-core";
+import {
+	commandMatchesAllowedBash,
+	grantsUnrestrictedBash,
+	hasBashGrant,
+	splitShellCommands,
+} from "cyrus-core";
 
 // The shell-command matching below used to live here. It is engine-agnostic —
 // string matching over a shell command and a list of `Bash(...)` grants — and
@@ -442,12 +447,20 @@ export function evaluatePermissionRequest(
 	params: unknown,
 	policy: Pick<GrokToolPolicy, "deny"> & Partial<Pick<GrokToolPolicy, "allow">>,
 ): { allowed: boolean; reason: string } {
-	if (policy.deny.length === 0) {
-		return { allowed: true, reason: "no restriction in force" };
-	}
-
 	const { hints, mcpServer, command } = describePermissionRequest(params);
 	const allow = policy.allow ?? [];
+
+	// An empty deny list is not always "no restriction". When the allow-list
+	// grants every mutating class *and* a scoped Bash pattern (so translate
+	// omits a blanket Bash deny), deny is [] but shell still must be checked
+	// against the grant. Early-returning here used to allow `sed -i` under a
+	// `Bash(git:*)` allow-list. Use the shared core helpers so this matches
+	// the Claude path.
+	const scopedBashInForce =
+		hasBashGrant(allow) && !grantsUnrestrictedBash(allow);
+	if (policy.deny.length === 0 && !scopedBashInForce) {
+		return { allowed: true, reason: "no restriction in force" };
+	}
 
 	// A deny rule with no argument (`Write`, `Bash`) denies the whole tool
 	// class. A *scoped* rule (`Bash(sed:*)`) denies only the commands it names

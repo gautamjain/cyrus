@@ -445,7 +445,9 @@ export class GrokEventMapper {
 		const permissionDenials = (options?.permissionDenials ?? []).map(
 			(denial) => ({
 				tool_name: denial.tool,
-				tool_use_id: null,
+				// SDK type wants a string; we rarely have the ACP toolCallId at
+				// permission time, so empty is honest (not a fake id).
+				tool_use_id: "",
 				tool_input: {},
 				reason: denial.reason,
 			}),

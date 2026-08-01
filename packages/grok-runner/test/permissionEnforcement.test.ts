@@ -154,6 +154,30 @@ describe("evaluatePermissionRequest", () => {
 			).toBe(true);
 		});
 
+		it("still enforces scoped Bash when deny is empty (all mutators allowed)", () => {
+			// Allow-list grants Edit/Write/NotebookEdit *and* a scoped Bash pattern
+			// → translate omits a blanket Bash deny, so deny is []. The client must
+			// still refuse shell outside the grant (fail-open before this check).
+			const policy = translateToolRules([
+				"Edit",
+				"Write",
+				"NotebookEdit",
+				"Bash(git diff:*)",
+			]);
+			expect(policy.deny).toEqual([]);
+			expect(policy.scopedBashUnenforceable).toBe(true);
+			expect(
+				evaluatePermissionRequest(shellCall("git diff origin/main"), policy)
+					.allowed,
+			).toBe(true);
+			const sed = evaluatePermissionRequest(
+				shellCall("sed -i s/a/b/ f"),
+				policy,
+			);
+			expect(sed.allowed).toBe(false);
+			expect(sed.reason).toContain("outside the allow-list");
+		});
+
 		describe("chaining cannot smuggle a command past the grant", () => {
 			// The grant is matched against the *unparsed* command, so anything after
 			// a shell operator was never examined: `git diff HEAD && sed -i ...` is
