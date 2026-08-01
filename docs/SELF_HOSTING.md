@@ -84,13 +84,9 @@ You'll need:
 
 ---
 
-## Step 2: Configure Agent Authentication
+## Step 2: Configure Claude Code Authentication
 
-Cyrus is multi-harness. Configure at least one agent:
-
-### Claude Code
-
-Choose one option and add it to your env file (`~/.cyrus/.env`):
+Cyrus needs Claude Code credentials. Choose one option and add it to your env file (`~/.cyrus/.env`):
 
 **Option A: API Key** (recommended)
 ```bash
@@ -109,9 +105,9 @@ CLAUDE_CODE_OAUTH_TOKEN=your-oauth-token
 
 For Vertex AI, Azure, AWS Bedrock, and other providers, see the [Third-Party Integrations](https://docs.anthropic.com/en/docs/claude-code/bedrock-vertex) documentation.
 
-### Grok Build (subscription)
+### Optional: Grok Build (subscription)
 
-Use the same browser login as the interactive Grok CLI (bills against your Grok subscription, e.g. SuperGrok Heavy — not per-token API keys):
+If you use the Grok runner, use the same browser login as the interactive Grok CLI (bills against your Grok subscription, e.g. SuperGrok Heavy — not per-token API keys):
 
 ```bash
 # Install Grok Build if needed
