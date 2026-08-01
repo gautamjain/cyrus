@@ -270,15 +270,18 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		return GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS;
 	}
 
-	private buildAgentArgs(): string[] {
+	/**
+	 * Build CLI argv for `grok agent … stdio`.
+	 * Policy is resolved once in {@link runSession} (Claude/Codex style) and
+	 * shared with the ACP permission handler so flags and enforcement match.
+	 */
+	private buildAgentArgs(
+		policy: ReturnType<typeof translateToolRules>,
+	): string[] {
 		// Permission rules are *global* flags: they must precede the `agent`
 		// subcommand (verified against grok 0.2.111 — an invalid value there is
 		// rejected by the parser, so they are genuinely read in this position).
 		const args: string[] = [];
-		const policy = translateToolRules(
-			this.config.allowedTools,
-			this.config.disallowedTools,
-		);
 		for (const rule of policy.allow) {
 			args.push("--allow", rule);
 		}
@@ -378,12 +381,14 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 	private async runSession(prompt: string, workspace: string): Promise<void> {
 		const binary = resolveGrokBinary(this.config.grokPath);
-		const args = this.buildAgentArgs();
-		const env = this.buildChildEnv(workspace);
+		// One policy translation for CLI flags + client-side enforcement (same
+		// pattern as Claude building allowedTools once, or CodexConfigBuilder).
 		const policy = translateToolRules(
 			this.config.allowedTools,
 			this.config.disallowedTools,
 		);
+		const args = this.buildAgentArgs(policy);
+		const env = this.buildChildEnv(workspace);
 
 		this.logger.debug(`Spawning ACP: ${binary} ${args.join(" ")}`);
 
