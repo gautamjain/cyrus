@@ -1,4 +1,19 @@
 export {
+	collectFolderTrustPaths,
+	ensureGrokFolderTrust,
+	isPathTrusted,
+	parseTrustedFoldersToml,
+	resolveGrokHome,
+	trustStorePath,
+} from "./backend/folderTrust.js";
+export {
+	autoDetectMcpConfigPath,
+	buildMcpExpandEnv,
+	collectMcpConfigPaths,
+	expandEnvInString,
+	loadDotEnvFile,
+	loadMcpConfigFromPaths,
+	resolveMcpConfigFilePath,
 	toAcpNameValueList,
 	translateMcpConfigToAcp,
 } from "./backend/mcpTranslator.js";

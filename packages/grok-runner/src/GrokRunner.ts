@@ -25,7 +25,11 @@ import type {
 	AcpSessionUpdateParams,
 	JsonRpcNotification,
 } from "./backend/acpTypes.js";
-import { translateMcpConfigToAcp } from "./backend/mcpTranslator.js";
+import { ensureGrokFolderTrust } from "./backend/folderTrust.js";
+import {
+	buildMcpExpandEnv,
+	translateMcpConfigToAcp,
+} from "./backend/mcpTranslator.js";
 import { GrokMessageFormatter } from "./formatter.js";
 import { GrokEventMapper } from "./GrokEventMapper.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
@@ -109,6 +113,31 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		const workspace = resolve(this.config.workingDirectory || process.cwd());
 		if (!existsSync(workspace)) {
 			mkdirSync(workspace, { recursive: true });
+		}
+
+		// Grok drops project-scoped MCP names (from worktree `.mcp.json`) when the
+		// workspace is untrusted. Headless ACP has no interactive trust prompt, so
+		// grant trust for this session workspace (+ git main workdir for worktrees)
+		// before spawning `grok agent`. Only touches ~/.grok/trusted_folders.toml.
+		try {
+			const trust = ensureGrokFolderTrust(workspace, {
+				grokHome: this.config.grokHome || process.env.GROK_HOME || undefined,
+			});
+			if (trust.writtenPaths.length > 0) {
+				this.logger.info(
+					`Granted Grok folder trust for: ${trust.writtenPaths.join(", ")}`,
+				);
+			} else {
+				this.logger.debug(
+					`Grok folder trust already set for: ${trust.trustedPaths.join(", ") || workspace}`,
+				);
+			}
+		} catch (trustError) {
+			this.logger.warn(
+				`Could not ensure Grok folder trust for ${workspace}: ${
+					trustError instanceof Error ? trustError.message : String(trustError)
+				}`,
+			);
 		}
 
 		this.setupLogging(workspace);
@@ -245,9 +274,16 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	 * required so an authenticate fallback to `xai.api_key` can actually work
 	 * on the already-spawned child (other runners do not strip API keys either).
 	 */
-	private buildChildEnv(): NodeJS.ProcessEnv {
+	/**
+	 * Child env for the Grok process.
+	 * Inherits full process.env (Cyrus service EnvironmentFile keys such as
+	 * EXA_API_KEY stay available). Gap-fills from `<workspace>/.env` without
+	 * overriding existing process env, then forces GROK_HOME / no auto-update.
+	 */
+	private buildChildEnv(workspace?: string): NodeJS.ProcessEnv {
+		const expanded = buildMcpExpandEnv(workspace);
 		const env: NodeJS.ProcessEnv = {
-			...process.env,
+			...expanded,
 			GROK_DISABLE_AUTOUPDATER: "1",
 		};
 		const grokHome =
@@ -259,7 +295,7 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	private async runSession(prompt: string, workspace: string): Promise<void> {
 		const binary = resolveGrokBinary(this.config.grokPath);
 		const args = this.buildAgentArgs();
-		const env = this.buildChildEnv();
+		const env = this.buildChildEnv(workspace);
 
 		this.logger.debug(`Spawning ACP: ${binary} ${args.join(" ")}`);
 
@@ -350,13 +386,16 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			subscriptionTier: tier ?? null,
 		});
 
+		const expandEnv = buildMcpExpandEnv(workspace);
 		const mcpServers = translateMcpConfigToAcp({
 			workingDirectory: workspace,
 			mcpConfigPath: this.config.mcpConfigPath,
 			mcpConfig: this.config.mcpConfig,
 			mcpCapabilities: caps.mcpCapabilities,
+			env: expandEnv,
 		});
-		this.logger.debug(
+		// INFO so live verification does not require DEBUG
+		this.logger.info(
 			`MCP servers for session: ${mcpServers.map((s) => s.name).join(", ") || "(none)"}`,
 		);
 
