@@ -25,7 +25,10 @@ import type {
 	AcpSessionUpdateParams,
 	JsonRpcNotification,
 } from "./backend/acpTypes.js";
-import { ensureGrokFolderTrust } from "./backend/folderTrust.js";
+import {
+	ensureGrokFolderTrust,
+	resolveGrokHome,
+} from "./backend/folderTrust.js";
 import {
 	buildMcpExpandEnv,
 	translateMcpConfigToAcp,
@@ -270,11 +273,6 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		return GROK_DEFAULT_TURN_IDLE_TIMEOUT_MS;
 	}
 
-	/**
-	 * Build CLI argv for `grok agent … stdio`.
-	 * Policy is resolved once in {@link runSession} (Claude/Codex style) and
-	 * shared with the ACP permission handler so flags and enforcement match.
-	 */
 	private buildAgentArgs(
 		policy: ReturnType<typeof translateToolRules>,
 	): string[] {
@@ -353,42 +351,25 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		return args;
 	}
 
-	/**
-	 * Child env for the Grok process.
-	 * Same pattern as Gemini/Codex: inherit process.env (keys stay available).
-	 * Auth method is chosen explicitly via ACP `authenticate` — we prefer
-	 * `cached_token` when auth.json exists; leaving XAI_API_KEY in the env is
-	 * required so an authenticate fallback to `xai.api_key` can actually work
-	 * on the already-spawned child (other runners do not strip API keys either).
-	 */
-	/**
-	 * Child env for the Grok process.
-	 * Inherits full process.env (Cyrus service EnvironmentFile keys such as
-	 * EXA_API_KEY stay available). Gap-fills from `<workspace>/.env` without
-	 * overriding existing process env, then forces GROK_HOME / no auto-update.
-	 */
-	private buildChildEnv(workspace?: string): NodeJS.ProcessEnv {
-		const expanded = buildMcpExpandEnv(workspace);
-		const env: NodeJS.ProcessEnv = {
-			...expanded,
+	private buildChildEnv(
+		expandEnv: Record<string, string | undefined>,
+	): NodeJS.ProcessEnv {
+		return {
+			...expandEnv,
 			GROK_DISABLE_AUTOUPDATER: "1",
+			GROK_HOME: resolveGrokHome(this.config.grokHome),
 		};
-		const grokHome =
-			this.config.grokHome || process.env.GROK_HOME || join(homedir(), ".grok");
-		env.GROK_HOME = grokHome;
-		return env;
 	}
 
 	private async runSession(prompt: string, workspace: string): Promise<void> {
 		const binary = resolveGrokBinary(this.config.grokPath);
-		// One policy translation for CLI flags + client-side enforcement (same
-		// pattern as Claude building allowedTools once, or CodexConfigBuilder).
 		const policy = translateToolRules(
 			this.config.allowedTools,
 			this.config.disallowedTools,
 		);
+		const expandEnv = buildMcpExpandEnv(workspace);
 		const args = this.buildAgentArgs(policy);
-		const env = this.buildChildEnv(workspace);
+		const env = this.buildChildEnv(expandEnv);
 
 		this.logger.debug(`Spawning ACP: ${binary} ${args.join(" ")}`);
 
@@ -502,7 +483,6 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			subscriptionTier: tier ?? null,
 		});
 
-		const expandEnv = buildMcpExpandEnv(workspace);
 		const mcpServers = translateMcpConfigToAcp({
 			workingDirectory: workspace,
 			mcpConfigPath: this.config.mcpConfigPath,
