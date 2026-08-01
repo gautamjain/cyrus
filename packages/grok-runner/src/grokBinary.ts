@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveGrokHome } from "./backend/folderTrust.js";
 
 /**
  * Resolve the Grok Build CLI binary path.
@@ -13,18 +13,14 @@ export function resolveGrokBinary(explicitPath?: string): string {
 	if (process.env.GROK_PATH && process.env.GROK_PATH.trim().length > 0) {
 		return process.env.GROK_PATH;
 	}
-	const managed = join(homedir(), ".grok", "bin", "grok");
+	const managed = join(resolveGrokHome(), "bin", "grok");
 	if (existsSync(managed)) {
 		return managed;
 	}
 	return "grok";
 }
 
-/**
- * True when a Grok CLI login session file exists.
- * Does not read token contents (secrets stay out of process memory here).
- */
+/** True when a Grok CLI login session file exists (does not read token contents). */
 export function hasGrokCachedAuth(grokHome?: string): boolean {
-	const home = grokHome || process.env.GROK_HOME || join(homedir(), ".grok");
-	return existsSync(join(home, "auth.json"));
+	return existsSync(join(resolveGrokHome(grokHome), "auth.json"));
 }
