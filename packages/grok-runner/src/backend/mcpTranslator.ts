@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import type { McpServerConfig } from "cyrus-core";
+import dotenv from "dotenv";
 import type {
 	AcpMcpCapabilities,
 	AcpMcpServer,
@@ -60,22 +61,8 @@ export function loadDotEnvFile(
 	const out: Record<string, string | undefined> = { ...base };
 	if (!existsSync(filePath)) return out;
 	try {
-		const text = readFileSync(filePath, "utf8");
-		for (const rawLine of text.split(/\r?\n/)) {
-			const line = rawLine.trim();
-			if (!line || line.startsWith("#")) continue;
-			const eq = line.indexOf("=");
-			if (eq <= 0) continue;
-			const key = line.slice(0, eq).trim();
-			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-			let val = line.slice(eq + 1).trim();
-			if (
-				(val.startsWith('"') && val.endsWith('"')) ||
-				(val.startsWith("'") && val.endsWith("'"))
-			) {
-				val = val.slice(1, -1);
-			}
-			// Existing process/base env wins — service-level secrets stay authoritative
+		const parsed = dotenv.parse(readFileSync(filePath, "utf8"));
+		for (const [key, val] of Object.entries(parsed)) {
 			if (out[key] === undefined || out[key] === "") {
 				out[key] = val;
 			}
