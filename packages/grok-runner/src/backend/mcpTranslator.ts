@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 import type { McpServerConfig } from "cyrus-core";
 import dotenv from "dotenv";
 import type {
@@ -88,15 +88,21 @@ export function buildMcpExpandEnv(
 }
 
 /**
- * Validate and return an absolute path to a readable `.mcp.json` if the file
- * exists and parses as JSON with an object root.
+ * Auto-detect `.mcp.json` in the session working directory.
+ * Same order/shape as Claude, Codex, and Gemini runners.
  */
 export function autoDetectMcpConfigPath(
 	workingDirectory?: string,
 ): string | undefined {
-	if (!workingDirectory) return undefined;
-	const mcpPath = resolve(workingDirectory, ".mcp.json");
-	if (!existsSync(mcpPath)) return undefined;
+	if (!workingDirectory) {
+		return undefined;
+	}
+
+	const mcpPath = join(workingDirectory, ".mcp.json");
+	if (!existsSync(mcpPath)) {
+		return undefined;
+	}
+
 	try {
 		JSON.parse(readFileSync(mcpPath, "utf8"));
 		return mcpPath;
@@ -109,83 +115,25 @@ export function autoDetectMcpConfigPath(
 }
 
 /**
- * Recover a usable absolute path for an MCP config file entry.
- *
- * EdgeWorker resolves relative `mcpConfigPath` values with `path.resolve` against
- * the *service* process cwd (often `/` under systemd), producing broken
- * absolutes like `/.mcp.json`. When the primary path is missing, try the same
- * basename under the session worktree.
- */
-export function resolveMcpConfigFilePath(
-	configPath: string,
-	workingDirectory?: string,
-): string | undefined {
-	const candidates: string[] = [];
-
-	if (isAbsolute(configPath)) {
-		candidates.push(configPath);
-	} else if (workingDirectory) {
-		candidates.push(resolve(workingDirectory, configPath));
-	} else {
-		candidates.push(resolve(configPath));
-	}
-
-	// Recovery: broken absolute from Edge (e.g. /.mcp.json) → worktree file
-	if (workingDirectory) {
-		const base = basename(configPath);
-		if (base && base !== "." && base !== "..") {
-			candidates.push(resolve(workingDirectory, base));
-		}
-		// Always consider canonical worktree project MCP file
-		candidates.push(resolve(workingDirectory, ".mcp.json"));
-	}
-
-	const seen = new Set<string>();
-	for (const candidate of candidates) {
-		if (seen.has(candidate)) continue;
-		seen.add(candidate);
-		if (!existsSync(candidate)) continue;
-		try {
-			JSON.parse(readFileSync(candidate, "utf8"));
-			return candidate;
-		} catch {
-			// try next candidate
-		}
-	}
-	return undefined;
-}
-
-/**
- * Collect unique absolute MCP config paths to load, in order:
- * 1. Explicit mcpConfigPath entries (recovered against worktree when needed)
- * 2. Auto-detected worktree `.mcp.json` (if not already listed)
+ * Collect MCP config file paths (Claude/Codex/Gemini order):
+ * 1. Auto-detected worktree `.mcp.json`
+ * 2. Explicit `mcpConfigPath` entries from EdgeWorker (as-is)
  */
 export function collectMcpConfigPaths(
 	mcpConfigPath: string | string[] | undefined,
 	workingDirectory?: string,
 ): string[] {
 	const paths: string[] = [];
-	const seen = new Set<string>();
-
-	const push = (p: string | undefined) => {
-		if (!p || seen.has(p)) return;
-		seen.add(p);
-		paths.push(p);
-	};
-
-	const explicit = mcpConfigPath
-		? Array.isArray(mcpConfigPath)
-			? mcpConfigPath
-			: [mcpConfigPath]
-		: [];
-
-	// Auto-detect first so worktree project file is the base (Claude order)
-	push(autoDetectMcpConfigPath(workingDirectory));
-
-	for (const raw of explicit) {
-		push(resolveMcpConfigFilePath(raw, workingDirectory));
+	const auto = autoDetectMcpConfigPath(workingDirectory);
+	if (auto) {
+		paths.push(auto);
 	}
-
+	if (mcpConfigPath) {
+		const explicit = Array.isArray(mcpConfigPath)
+			? mcpConfigPath
+			: [mcpConfigPath];
+		paths.push(...explicit);
+	}
 	return paths;
 }
 
@@ -232,6 +180,7 @@ export interface McpTranslateOptions {
 	/**
 	 * Env map for `${VAR}` expansion. Defaults to process.env plus
 	 * `<workingDirectory>/.env` gap-fill when workingDirectory is set.
+	 * (Grok ACP needs expanded headers/env; Claude/Codex expand differently.)
 	 */
 	env?: Record<string, string | undefined>;
 }

@@ -8,7 +8,6 @@ import {
 	collectMcpConfigPaths,
 	expandEnvInString,
 	loadDotEnvFile,
-	resolveMcpConfigFilePath,
 	toAcpNameValueList,
 	translateMcpConfigToAcp,
 } from "../src/backend/mcpTranslator.js";
@@ -70,7 +69,7 @@ describe("loadDotEnvFile / buildMcpExpandEnv", () => {
 	});
 });
 
-describe("path recovery", () => {
+describe("MCP path collection (Claude/Codex/Gemini parity)", () => {
 	it("autoDetectMcpConfigPath finds worktree .mcp.json", () => {
 		const dir = mkdtempSync(join(tmpdir(), "grok-mcp-auto-"));
 		writeFileSync(
@@ -82,31 +81,31 @@ describe("path recovery", () => {
 		expect(autoDetectMcpConfigPath(dir)).toBe(join(dir, ".mcp.json"));
 	});
 
-	it("resolveMcpConfigFilePath recovers broken absolute against worktree", () => {
-		const dir = mkdtempSync(join(tmpdir(), "grok-mcp-recover-"));
-		const good = join(dir, ".mcp.json");
-		writeFileSync(
-			good,
-			JSON.stringify({
-				mcpServers: { context: { command: "context", args: [] } },
-			}),
-		);
-		// Simulate Edge resolvePath(".mcp.json") under cwd=/
-		expect(resolveMcpConfigFilePath("/.mcp.json", dir)).toBe(good);
-		expect(resolveMcpConfigFilePath(".mcp.json", dir)).toBe(good);
-	});
-
-	it("collectMcpConfigPaths includes auto-detect and recovered explicit", () => {
+	it("collectMcpConfigPaths is worktree auto-detect then explicit paths", () => {
 		const dir = mkdtempSync(join(tmpdir(), "grok-mcp-collect-"));
+		const worktreeMcp = join(dir, ".mcp.json");
+		const explicitMcp = join(dir, "extra-mcp.json");
 		writeFileSync(
-			join(dir, ".mcp.json"),
+			worktreeMcp,
 			JSON.stringify({
 				mcpServers: { exa: { type: "http", url: "https://example.com" } },
 			}),
 		);
-		const paths = collectMcpConfigPaths("/.mcp.json", dir);
-		expect(paths).toContain(join(dir, ".mcp.json"));
-		expect(paths.length).toBeGreaterThanOrEqual(1);
+		writeFileSync(
+			explicitMcp,
+			JSON.stringify({
+				mcpServers: { context: { command: "context", args: [] } },
+			}),
+		);
+
+		expect(collectMcpConfigPaths(undefined, dir)).toEqual([worktreeMcp]);
+		expect(collectMcpConfigPaths(explicitMcp, dir)).toEqual([
+			worktreeMcp,
+			explicitMcp,
+		]);
+		expect(collectMcpConfigPaths(explicitMcp, undefined)).toEqual([
+			explicitMcp,
+		]);
 	});
 });
 

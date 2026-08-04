@@ -35,6 +35,7 @@ import {
 } from "./backend/mcpTranslator.js";
 import { GrokMessageFormatter } from "./formatter.js";
 import { GrokEventMapper } from "./GrokEventMapper.js";
+import { GrokSkillStager } from "./GrokSkillStager.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
 import {
 	buildRejectionOutcome,
@@ -87,6 +88,7 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	private readonly config: GrokRunnerConfig;
 	private readonly formatter: IMessageFormatter;
 	private readonly logger: ILogger;
+	private readonly skillStager: GrokSkillStager;
 	private sessionInfo: GrokSessionInfo | null = null;
 	private client: AcpClient | null = null;
 	private mapper: GrokEventMapper | null = null;
@@ -110,6 +112,12 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		this.config = config;
 		this.formatter = new GrokMessageFormatter();
 		this.logger = config.logger ?? createLogger({ component: "GrokRunner" });
+		this.skillStager = new GrokSkillStager({
+			workingDirectory: config.workingDirectory,
+			additionalDirectories: config.additionalDirectories,
+			skills: config.skills,
+			plugins: config.plugins,
+		});
 
 		if (config.onMessage) this.on("message", config.onMessage);
 		if (config.onError) this.on("error", config.onError);
@@ -134,6 +142,12 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		const workspace = resolve(this.config.workingDirectory || process.cwd());
 		if (!existsSync(workspace)) {
 			mkdirSync(workspace, { recursive: true });
+		}
+
+		this.skillStager.stage();
+		const staged = this.skillStager.getStagedSkillNames();
+		if (staged.length > 0) {
+			this.logger.info(`Staged managed skills for Grok: ${staged.join(", ")}`);
 		}
 
 		// Grok drops project-scoped MCP names (from worktree `.mcp.json`) when the
@@ -483,6 +497,7 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			subscriptionTier: tier ?? null,
 		});
 
+		// Same sources as Claude/Codex: worktree .mcp.json + mcpConfigPath + inline.
 		const mcpServers = translateMcpConfigToAcp({
 			workingDirectory: workspace,
 			mcpConfigPath: this.config.mcpConfigPath,
@@ -490,7 +505,6 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			mcpCapabilities: caps.mcpCapabilities,
 			env: expandEnv,
 		});
-		// INFO so live verification does not require DEBUG
 		this.logger.info(
 			`MCP servers for session: ${mcpServers.map((s) => s.name).join(", ") || "(none)"}`,
 		);
@@ -927,6 +941,8 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		if (this.logDir) {
 			this.logger.debug(`Session logs closed under ${this.logDir}`);
 		}
+
+		this.skillStager.cleanup();
 
 		if (error && !this.wasStopped) {
 			const err = error instanceof Error ? error : new Error(String(error));
