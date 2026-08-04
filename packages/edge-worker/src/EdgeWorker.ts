@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { LinearClient } from "@linear/sdk";
 import type {
 	McpServerConfig,
@@ -197,6 +197,34 @@ export declare interface EdgeWorker {
 type CyrusToolsMcpContext = {
 	contextId?: string;
 };
+
+/**
+ * Resolve repository-scoped paths. Relative `mcpConfigPath` must resolve against
+ * the repo clone — not process.cwd() (often `/` under systemd → `/.mcp.json`).
+ */
+function resolveRepositoryConfig(repo: RepositoryConfig): RepositoryConfig {
+	const repositoryPath = resolvePath(repo.repositoryPath);
+	const resolveAgainstRepo = (pathValue: string): string => {
+		if (pathValue.startsWith("~/") || isAbsolute(pathValue)) {
+			return resolvePath(pathValue);
+		}
+		return resolve(repositoryPath, pathValue);
+	};
+	const mcp = repo.mcpConfigPath;
+	return {
+		...repo,
+		repositoryPath,
+		workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
+		mcpConfigPath: !mcp
+			? undefined
+			: Array.isArray(mcp)
+				? mcp.map(resolveAgainstRepo)
+				: resolveAgainstRepo(mcp),
+		promptTemplatePath: repo.promptTemplatePath
+			? resolvePath(repo.promptTemplatePath)
+			: undefined,
+	};
+}
 
 /**
  * Unified edge worker that **orchestrates**
@@ -495,21 +523,7 @@ export class EdgeWorker extends EventEmitter {
 		for (const repo of config.repositories) {
 			if (repo.isActive !== false) {
 				// Resolve paths that may contain tilde (~) prefix
-				const resolvedRepo: RepositoryConfig = {
-					...repo,
-					repositoryPath: resolvePath(repo.repositoryPath),
-					workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
-					mcpConfigPath: Array.isArray(repo.mcpConfigPath)
-						? repo.mcpConfigPath.map(resolvePath)
-						: repo.mcpConfigPath
-							? resolvePath(repo.mcpConfigPath)
-							: undefined,
-					promptTemplatePath: repo.promptTemplatePath
-						? resolvePath(repo.promptTemplatePath)
-						: undefined,
-				};
-
-				this.repositories.set(repo.id, resolvedRepo);
+				this.repositories.set(repo.id, resolveRepositoryConfig(repo));
 			}
 		}
 
@@ -2960,22 +2974,7 @@ ${taskSection}`;
 			try {
 				this.logger.info(`➕ Adding repository: ${repo.name} (${repo.id})`);
 
-				// Resolve paths that may contain tilde (~) prefix
-				const resolvedRepo: RepositoryConfig = {
-					...repo,
-					repositoryPath: resolvePath(repo.repositoryPath),
-					workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
-					mcpConfigPath: Array.isArray(repo.mcpConfigPath)
-						? repo.mcpConfigPath.map(resolvePath)
-						: repo.mcpConfigPath
-							? resolvePath(repo.mcpConfigPath)
-							: undefined,
-					promptTemplatePath: repo.promptTemplatePath
-						? resolvePath(repo.promptTemplatePath)
-						: undefined,
-				};
-
-				// Add to internal map
+				const resolvedRepo = resolveRepositoryConfig(repo);
 				this.repositories.set(repo.id, resolvedRepo);
 
 				this.logger.info(`✅ Repository added successfully: ${repo.name}`);
@@ -3003,22 +3002,7 @@ ${taskSection}`;
 
 				this.logger.info(`🔄 Updating repository: ${repo.name} (${repo.id})`);
 
-				// Resolve paths that may contain tilde (~) prefix
-				const resolvedRepo: RepositoryConfig = {
-					...repo,
-					repositoryPath: resolvePath(repo.repositoryPath),
-					workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
-					mcpConfigPath: Array.isArray(repo.mcpConfigPath)
-						? repo.mcpConfigPath.map(resolvePath)
-						: repo.mcpConfigPath
-							? resolvePath(repo.mcpConfigPath)
-							: undefined,
-					promptTemplatePath: repo.promptTemplatePath
-						? resolvePath(repo.promptTemplatePath)
-						: undefined,
-				};
-
-				// Update stored config
+				const resolvedRepo = resolveRepositoryConfig(repo);
 				this.repositories.set(repo.id, resolvedRepo);
 
 				// If active status changed
