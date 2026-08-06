@@ -214,10 +214,20 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			await this.runSession(prompt, workspace);
 		} catch (error) {
 			caughtError = error;
-			this.logger.error(
-				"Grok session failed:",
-				error instanceof Error ? error.message : String(error),
-			);
+			// stop() kills the ACP child; in-flight session/prompt rejects with
+			// "ACP client closed". That is expected teardown, not a session failure
+			// (same class as Claude AbortError / Codex wasStopped).
+			if (this.wasStopped) {
+				this.logger.info(
+					"Grok session stopped:",
+					error instanceof Error ? error.message : String(error),
+				);
+			} else {
+				this.logger.error(
+					"Grok session failed:",
+					error instanceof Error ? error.message : String(error),
+				);
+			}
 		} finally {
 			this.finalize(caughtError);
 		}
@@ -953,7 +963,8 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			sessionId: this.sessionInfo?.sessionId ?? null,
 			messageCount: this.messages.length,
 			wasStopped: this.wasStopped,
-			hadError: Boolean(error),
+			// Teardown errors after stop() are not session failures.
+			hadError: Boolean(error) && !this.wasStopped,
 		});
 
 		this.emit("complete", this.messages);
