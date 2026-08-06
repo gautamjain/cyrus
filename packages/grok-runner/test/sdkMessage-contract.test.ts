@@ -173,6 +173,52 @@ describe("SDKMessage contract for AgentSessionManager", () => {
 		expect(result.errors?.join(" ")).toContain("boom");
 	});
 
+	/**
+	 * Intentional stop (EdgeWorker mid-turn re-prompt, stop signal, etc.).
+	 * Codex omits a terminal result when wasStopped; Claude does not treat
+	 * AbortError as a failure. Grok must not emit is_error result — ASM posts
+	 * those as Linear activity type "error" ("Error from Cyrus").
+	 */
+	it("does not emit an is_error result when the session was intentionally stopped", () => {
+		const { mapper, messages } = runMapper();
+		mapper.emitInit("s1");
+		mapper.handleUpdate({
+			sessionUpdate: "agent_message_chunk",
+			content: { type: "text", text: "Still working…" },
+		});
+		// Teardown after stop() rejects in-flight session/prompt with this string.
+		mapper.finalize({
+			wasStopped: true,
+			error: new Error("ACP client closed"),
+		});
+
+		const results = messages.filter((m) => m.type === "result");
+		const errorResults = results.filter(
+			(m) => (m as { is_error?: boolean }).is_error === true,
+		);
+		expect(errorResults).toEqual([]);
+		// No Linear-facing failure body from the stop itself.
+		for (const r of results) {
+			const errors = (r as { errors?: string[] }).errors;
+			if (Array.isArray(errors)) {
+				expect(errors.join(" ")).not.toContain("ACP client closed");
+			}
+		}
+	});
+
+	it("still emits is_error when ACP closes without an intentional stop", () => {
+		const { mapper, messages } = runMapper();
+		mapper.emitInit("s1");
+		mapper.finalize({ error: new Error("ACP client closed") });
+
+		const result = messages.find((m) => m.type === "result") as {
+			is_error: boolean;
+			errors?: string[];
+		};
+		expect(result?.is_error).toBe(true);
+		expect(result?.errors?.join(" ")).toContain("ACP client closed");
+	});
+
 	it("full ACP-like turn order: init → tool_use → tool_result → text → result", () => {
 		const { mapper, messages } = runMapper();
 		mapper.emitInit("s1", "grok-4.5");
