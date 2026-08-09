@@ -1,10 +1,7 @@
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SdkPluginConfig } from "cyrus-claude-runner";
-import type { ILogger } from "cyrus-core";
-
-/** How the agent loads skill bodies. `skill-md-read` is for Grok Build only. */
-export type SkillLoadPath = "skill-tool" | "skill-md-read";
+import type { ILogger, RunnerType } from "cyrus-core";
 
 /**
  * Session context used to evaluate per-skill scope restrictions. Each dimension
@@ -324,14 +321,13 @@ export class SkillsPluginResolver {
 	 * Accepts pre-resolved plugins to avoid redundant filesystem access
 	 * when resolve() is also called separately for the runner config.
 	 *
-	 * @param options.skillLoadPath How the agent loads skill bodies.
-	 *   - `skill-tool` (default): Claude Skill tool
-	 *   - `skill-md-read`: Grok Build (read SKILL.md; no Skill tool)
+	 * @param options.runnerType Selected agent runner. Grok gets SKILL.md
+	 *   load wording; all other runners keep the Skill tool line.
 	 */
 	async buildSkillsGuidance(
 		plugins?: SdkPluginConfig[],
 		context?: SkillSessionContext,
-		options?: { skillLoadPath?: SkillLoadPath },
+		options?: { runnerType?: RunnerType },
 	): Promise<string> {
 		const resolvedPlugins = plugins ?? (await this.resolve());
 		const availableSkills = await this.discoverSkillNames(
@@ -345,14 +341,8 @@ export class SkillsPluginResolver {
 
 		const skillsList = availableSkills.map((s) => `\`${s}\``).join(", ");
 		const availability =
-			options?.skillLoadPath === "skill-md-read"
-				? [
-						`You have skills available: ${skillsList}`,
-						"",
-						"Grok has no Skill tool. Load a skill by reading its SKILL.md " +
-							"(absolute paths appear in the session skill listing; managed skills " +
-							"are under .agents/skills/<name>/SKILL.md).",
-					].join("\n")
+			options?.runnerType === "grok"
+				? `You have skills available by reading SKILL.md: ${skillsList}`
 				: `You have skills available via the Skill tool: ${skillsList}`;
 
 		return (
