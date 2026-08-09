@@ -41,7 +41,6 @@ import {
 	listAvailableInitTools,
 	listInitSlashCommands,
 } from "./sessionInventory.js";
-import { applyGrokSkillsGuidance } from "./skillsGuidance.js";
 import {
 	buildRejectionOutcome,
 	describePermissionRequest,
@@ -540,13 +539,8 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 		const sessionMeta: Record<string, unknown> = {};
 		if (this.config.appendSystemPrompt) {
-			// Replace the delimited skills section with Grok load instructions.
-			// Claude/Codex never enter GrokRunner, so their prompts stay skill-tool shaped.
-			const skillNames = this.skillStager.getStagedSkillNames();
-			sessionMeta.rules = applyGrokSkillsGuidance(
-				this.config.appendSystemPrompt,
-				skillNames,
-			);
+			// EdgeWorker already emits Grok load-path wording when runner is grok.
+			sessionMeta.rules = this.config.appendSystemPrompt;
 		}
 
 		const { sessionId, currentModel } = await this.openOrResumeSession(

@@ -82,7 +82,6 @@ Remember: Your first message is internal planning. Use this time to:
 3. Plan your approach systematically
 </task_management_instructions>
 
-<!-- cyrus-skills-guidance -->
 ## Skills
 
 You have skills available via the Skill tool: \`debug\`, \`implementation\`, \`investigate\`, \`summarize\`, \`verify-and-ship\`
@@ -94,8 +93,7 @@ Choose the appropriate skill based on the context:
 - **Question or research request**: Use \`investigate\` to search the codebase and provide an answer, then \`summarize\`.
 - **PR review feedback** (changes requested): Use \`implementation\` to address review comments, then \`verify-and-ship\`.
 
-Analyze the issue description, labels, and any user comments to determine which workflow fits. Do NOT skip the verify-and-ship step if you made code changes — it ensures quality checks pass and a PR is created.
-<!-- /cyrus-skills-guidance -->`)
+Analyze the issue description, labels, and any user comments to determine which workflow fits. Do NOT skip the verify-and-ship step if you made code changes — it ensures quality checks pass and a PR is created.`)
 			.expectPromptType("fallback")
 			.expectComponents("issue-context")
 			.verify();
@@ -179,7 +177,6 @@ Remember: Your first message is internal planning. Use this time to:
 3. Plan your approach systematically
 </task_management_instructions>
 
-<!-- cyrus-skills-guidance -->
 ## Skills
 
 You have skills available via the Skill tool: \`debug\`, \`implementation\`, \`investigate\`, \`summarize\`, \`verify-and-ship\`
@@ -191,8 +188,7 @@ Choose the appropriate skill based on the context:
 - **Question or research request**: Use \`investigate\` to search the codebase and provide an answer, then \`summarize\`.
 - **PR review feedback** (changes requested): Use \`implementation\` to address review comments, then \`verify-and-ship\`.
 
-Analyze the issue description, labels, and any user comments to determine which workflow fits. Do NOT skip the verify-and-ship step if you made code changes — it ensures quality checks pass and a PR is created.
-<!-- /cyrus-skills-guidance -->`)
+Analyze the issue description, labels, and any user comments to determine which workflow fits. Do NOT skip the verify-and-ship step if you made code changes — it ensures quality checks pass and a PR is created.`)
 			.expectPromptType("fallback")
 			.expectComponents("issue-context", "user-comment")
 			.verify();

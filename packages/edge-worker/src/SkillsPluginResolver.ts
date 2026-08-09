@@ -1,11 +1,10 @@
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SdkPluginConfig } from "cyrus-claude-runner";
-import {
-	formatSkillsGuidance,
-	type ILogger,
-	type SkillLoadPath,
-} from "cyrus-core";
+import type { ILogger } from "cyrus-core";
+
+/** How the agent loads skill bodies. `skill-md-read` is for Grok Build only. */
+export type SkillLoadPath = "skill-tool" | "skill-md-read";
 
 /**
  * Session context used to evaluate per-skill scope restrictions. Each dimension
@@ -340,9 +339,33 @@ export class SkillsPluginResolver {
 			context,
 		);
 
-		return formatSkillsGuidance(
-			availableSkills,
-			options?.skillLoadPath ?? "skill-tool",
+		if (availableSkills.length === 0) {
+			return "";
+		}
+
+		const skillsList = availableSkills.map((s) => `\`${s}\``).join(", ");
+		const availability =
+			options?.skillLoadPath === "skill-md-read"
+				? [
+						`You have skills available: ${skillsList}`,
+						"",
+						"Grok has no Skill tool. Load a skill by reading its SKILL.md " +
+							"(absolute paths appear in the session skill listing; managed skills " +
+							"are under .agents/skills/<name>/SKILL.md).",
+					].join("\n")
+				: `You have skills available via the Skill tool: ${skillsList}`;
+
+		return (
+			"\n\n## Skills\n\n" +
+			availability +
+			"\n\n" +
+			"Choose the appropriate skill based on the context:\n\n" +
+			"- **Code changes requested** (feature, bug fix, refactor): Use `implementation` to write code, then `verify-and-ship` to run checks and create a PR, then `summarize` to narrate results.\n" +
+			"- **Bug report or error**: Use `debug` to reproduce, root-cause, and fix, then `verify-and-ship`, then `summarize`.\n" +
+			"- **Question or research request**: Use `investigate` to search the codebase and provide an answer, then `summarize`.\n" +
+			"- **PR review feedback** (changes requested): Use `implementation` to address review comments, then `verify-and-ship`.\n\n" +
+			"Analyze the issue description, labels, and any user comments to determine which workflow fits. " +
+			"Do NOT skip the verify-and-ship step if you made code changes — it ensures quality checks pass and a PR is created."
 		);
 	}
 

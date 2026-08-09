@@ -28,7 +28,6 @@ export {
 	listAvailableInitTools,
 	listInitSlashCommands,
 } from "./sessionInventory.js";
-export { applyGrokSkillsGuidance } from "./skillsGuidance.js";
 export {
 	buildRejectionOutcome,
 	describePermissionRequest,

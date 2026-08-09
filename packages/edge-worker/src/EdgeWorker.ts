@@ -6182,15 +6182,23 @@ ${taskSection}`;
 		// 3. Append skills guidance — instruct the agent to use skills based on context.
 		// Skills hidden by per-skill scope (repo / Linear team / Linear label) are
 		// omitted from the guidance so the model doesn't reference skills it
-		// cannot invoke.
+		// cannot invoke. Load-path wording follows the selected runner (Grok has
+		// no Skill tool).
 		const skillsContext = this.buildSkillSessionContext(
 			repositories[0]!,
 			input.fullIssue,
 			input.session,
 		);
+		const runnerType = this.runnerSelectionService.determineRunnerSelection(
+			input.labels || [],
+			input.fullIssue?.description,
+		).runnerType;
 		systemPrompt += await this.skillsPluginResolver.buildSkillsGuidance(
 			undefined,
 			skillsContext,
+			{
+				skillLoadPath: runnerType === "grok" ? "skill-md-read" : "skill-tool",
+			},
 		);
 
 		// 4. Append agent context — dynamic values for skills to reference
