@@ -6188,9 +6188,14 @@ ${taskSection}`;
 			input.fullIssue,
 			input.session,
 		);
+		const runnerType = this.runnerSelectionService.determineRunnerSelection(
+			input.labels || [],
+			input.fullIssue?.description,
+		).runnerType;
 		systemPrompt += await this.skillsPluginResolver.buildSkillsGuidance(
 			undefined,
 			skillsContext,
+			{ runnerType },
 		);
 
 		// 4. Append agent context — dynamic values for skills to reference

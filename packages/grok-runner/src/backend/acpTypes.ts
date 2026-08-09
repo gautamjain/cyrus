@@ -94,6 +94,7 @@ export type AcpSessionUpdateType =
 	| "tool_call_update"
 	| "plan"
 	| "current_mode_update"
+	| "available_commands_update"
 	| string;
 
 export interface AcpToolMeta {
@@ -106,6 +107,12 @@ export interface AcpToolMeta {
 	input?: Record<string, unknown>;
 }
 
+export interface AcpAvailableCommand {
+	name?: string;
+	description?: string;
+	input?: { hint?: string } | null;
+}
+
 export interface AcpSessionUpdate {
 	sessionUpdate: AcpSessionUpdateType;
 	content?: { type?: string; text?: string } | unknown;
@@ -116,8 +123,12 @@ export interface AcpSessionUpdate {
 	rawInput?: Record<string, unknown>;
 	rawOutput?: unknown;
 	locations?: Array<{ path?: string }>;
+	/** Slash commands / skills (available_commands_update). */
+	availableCommands?: AcpAvailableCommand[];
 	_meta?: {
 		"x.ai/tool"?: AcpToolMeta;
+		/** Live built-in (+ MCP) tool names on available_commands_update. */
+		tools?: string[];
 		[key: string]: unknown;
 	};
 }

@@ -12,6 +12,9 @@ export type MapperContext = {
 	workingDirectory?: string;
 	model?: string;
 	getSessionId(): string;
+	getStagedSkillNames(): string[];
+	getAvailableTools(): string[];
+	getSlashCommands(): string[];
 	emitMessage(message: SDKMessage): void;
 	onSessionId(sessionId: string): void;
 };
@@ -362,13 +365,13 @@ export class GrokEventMapper {
 			apiKeySource: "user" as const,
 			claude_code_version: "grok-adapter",
 			cwd: this.ctx.workingDirectory || cwd(),
-			tools: [] as string[],
+			tools: this.ctx.getAvailableTools(),
 			mcp_servers: [] as Array<{ name: string; status: string }>,
 			model: this.model,
 			permissionMode: "default" as const,
-			slash_commands: [] as string[],
+			slash_commands: this.ctx.getSlashCommands(),
 			output_style: "default",
-			skills: [] as string[],
+			skills: this.ctx.getStagedSkillNames(),
 			plugins: [] as Array<{ name: string; path: string }>,
 			uuid: crypto.randomUUID(),
 			session_id: sessionId,
