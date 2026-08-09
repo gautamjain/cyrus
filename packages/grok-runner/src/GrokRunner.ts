@@ -38,14 +38,11 @@ import { GrokEventMapper } from "./GrokEventMapper.js";
 import { GrokSkillStager } from "./GrokSkillStager.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
 import {
-	listAvailableInitTools,
-	listInitSlashCommands,
-} from "./sessionInventory.js";
-import {
 	buildRejectionOutcome,
 	describePermissionRequest,
 	evaluatePermissionRequest,
 	type GrokToolPolicy,
+	listAvailableInitTools,
 	translateToolRules,
 } from "./toolPolicy.js";
 import {
@@ -196,8 +193,7 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			getStagedSkillNames: () => this.skillStager.getStagedSkillNames(),
 			getAvailableTools: () =>
 				listAvailableInitTools(this.sessionToolPolicy ?? toolPolicy),
-			getSlashCommands: () =>
-				listInitSlashCommands(this.skillStager.getStagedSkillNames()),
+			getSlashCommands: () => this.skillStager.getStagedSkillNames(),
 			emitMessage: (message) => {
 				this.messages.push(message);
 				this.writeSdkMessageLog(message);

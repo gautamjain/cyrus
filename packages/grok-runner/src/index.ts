@@ -25,14 +25,11 @@ export {
 } from "./GrokSkillStager.js";
 export { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
 export {
-	listAvailableInitTools,
-	listInitSlashCommands,
-} from "./sessionInventory.js";
-export {
 	buildRejectionOutcome,
 	describePermissionRequest,
 	evaluatePermissionRequest,
 	type GrokToolPolicy,
+	listAvailableInitTools,
 	translateToolRule,
 	translateToolRules,
 } from "./toolPolicy.js";

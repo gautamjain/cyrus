@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { translateToolRule, translateToolRules } from "../src/toolPolicy.js";
+import {
+	listAvailableInitTools,
+	translateToolRule,
+	translateToolRules,
+} from "../src/toolPolicy.js";
 
 /**
  * Cyrus's real `readOnly` preset (packages/claude-runner/src/config.ts). Most of
@@ -185,5 +189,55 @@ describe("translateToolRules", () => {
 		);
 		expect(policy.allow).toEqual(["Read(**)", "MCPTool(linear__*)"]);
 		expect(policy.deny.filter((r) => r === "Bash")).toHaveLength(1);
+	});
+});
+
+describe("listAvailableInitTools", () => {
+	it("lists Grok permission tool classes when unrestricted", () => {
+		const tools = listAvailableInitTools(translateToolRules(undefined));
+		expect(tools).toEqual([
+			"Bash",
+			"Read",
+			"NotebookRead",
+			"Edit",
+			"Write",
+			"NotebookEdit",
+			"Grep",
+			"Glob",
+			"MCPTool",
+			"WebFetch",
+			"WebSearch",
+		]);
+	});
+
+	it("omits blanket-denied tools without an allow-list", () => {
+		const tools = listAvailableInitTools(
+			translateToolRules(undefined, ["Bash", "Write"]),
+		);
+		expect(tools).not.toContain("Bash");
+		expect(tools).not.toContain("Write");
+		expect(tools).toContain("Read");
+		expect(tools).toContain("Edit");
+	});
+
+	it("omits mutating tools that a restricted allow-list does not grant", () => {
+		const tools = listAvailableInitTools(translateToolRules(CYRUS_READ_ONLY));
+		expect(tools).toContain("Read");
+		expect(tools).toContain("WebFetch");
+		expect(tools).toContain("WebSearch");
+		expect(tools).toContain("Grep");
+		expect(tools).not.toContain("Bash");
+		expect(tools).not.toContain("Edit");
+		expect(tools).not.toContain("Write");
+		expect(tools).not.toContain("NotebookEdit");
+	});
+
+	it("keeps Bash when the allow-list grants it (including scoped)", () => {
+		const tools = listAvailableInitTools(
+			translateToolRules(["Read(**)", "Bash(git:*)"]),
+		);
+		expect(tools).toContain("Bash");
+		expect(tools).toContain("Read");
+		expect(tools).not.toContain("Edit");
 	});
 });
