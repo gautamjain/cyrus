@@ -53,12 +53,7 @@ import {
 
 export { splitShellCommands };
 
-/**
- * Grok permission tool classes from the product docs ("Tool Names").
- * Used for rule translation and for session-init inventory — not wire names
- * like `run_terminal_command` / `search_tool`.
- */
-const GROK_BUILTIN_TOOL_CLASSES = [
+const RECOGNIZED_TOOL_NAMES = new Set([
 	"Bash",
 	"Read",
 	"NotebookRead",
@@ -70,10 +65,6 @@ const GROK_BUILTIN_TOOL_CLASSES = [
 	"MCPTool",
 	"WebFetch",
 	"WebSearch",
-] as const;
-
-const RECOGNIZED_TOOL_NAMES = new Set<string>([
-	...GROK_BUILTIN_TOOL_CLASSES,
 	"*",
 ]);
 
@@ -83,7 +74,6 @@ const RECOGNIZED_TOOL_NAMES = new Set<string>([
  * rather than advisory.
  */
 const MUTATING_TOOL_NAMES = ["Edit", "Write", "NotebookEdit", "Bash"] as const;
-const MUTATING_TOOL_NAME_SET = new Set<string>(MUTATING_TOOL_NAMES);
 
 export interface GrokToolPolicy {
 	/** `--allow` rules to pass to the Grok CLI. */
@@ -221,44 +211,6 @@ export function translateToolRules(
 	}
 
 	return { allow, deny, untranslated, scopedBashUnenforceable, restricted };
-}
-
-/**
- * Built-in tools available under this session policy (for system/init).
- *
- * Universe is Grok's documented permission tool classes. Entries are removed
- * when blanket-denied. When an allow-list is in force, mutating classes are
- * included only if granted — same shape as {@link translateToolRules}.
- */
-export function listAvailableInitTools(policy: GrokToolPolicy): string[] {
-	const blanketDenied = new Set<string>();
-	for (const rule of policy.deny) {
-		const { head, args } = splitRule(rule);
-		if (head && args === undefined) {
-			blanketDenied.add(head);
-		}
-	}
-
-	const allowedHeads = policy.restricted
-		? new Set(
-				policy.allow
-					.map((rule) => splitRule(rule).head)
-					.filter((head): head is string => Boolean(head)),
-			)
-		: null;
-
-	return GROK_BUILTIN_TOOL_CLASSES.filter((name) => {
-		if (blanketDenied.has(name)) {
-			return false;
-		}
-		if (!allowedHeads) {
-			return true;
-		}
-		if (MUTATING_TOOL_NAME_SET.has(name)) {
-			return allowedHeads.has(name) || allowedHeads.has("*");
-		}
-		return true;
-	});
 }
 
 /* -------------------------------------------------------------------------

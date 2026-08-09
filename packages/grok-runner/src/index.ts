@@ -29,7 +29,6 @@ export {
 	describePermissionRequest,
 	evaluatePermissionRequest,
 	type GrokToolPolicy,
-	listAvailableInitTools,
 	translateToolRule,
 	translateToolRules,
 } from "./toolPolicy.js";

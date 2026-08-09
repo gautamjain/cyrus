@@ -42,7 +42,6 @@ import {
 	describePermissionRequest,
 	evaluatePermissionRequest,
 	type GrokToolPolicy,
-	listAvailableInitTools,
 	translateToolRules,
 } from "./toolPolicy.js";
 import {
@@ -109,6 +108,10 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	/** Every policy refusal in this session, surfaced on the result message. */
 	private deniedThisSession: Array<{ tool: string; reason: string }> = [];
 	private sessionToolPolicy: GrokToolPolicy | null = null;
+	/** From ACP available_commands_update._meta.tools (live agent inventory). */
+	private advertisedTools: string[] = [];
+	/** From ACP available_commands_update.availableCommands[].name. */
+	private advertisedSlashCommands: string[] = [];
 
 	constructor(config: GrokRunnerConfig) {
 		super();
@@ -191,9 +194,8 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			model: this.resolvedModelId(),
 			getSessionId: () => this.sessionInfo?.sessionId || "pending",
 			getStagedSkillNames: () => this.skillStager.getStagedSkillNames(),
-			getAvailableTools: () =>
-				listAvailableInitTools(this.sessionToolPolicy ?? toolPolicy),
-			getSlashCommands: () => this.skillStager.getStagedSkillNames(),
+			getAvailableTools: () => this.advertisedTools,
+			getSlashCommands: () => this.advertisedSlashCommands,
 			emitMessage: (message) => {
 				this.messages.push(message);
 				this.writeSdkMessageLog(message);
@@ -789,12 +791,33 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		if (!update) return;
 
 		this.writeAcpWireLog(update);
+		this.captureAdvertisedInventory(update);
 
 		if (params?.sessionId && this.sessionInfo && !this.sessionInfo.sessionId) {
 			this.sessionInfo.sessionId = params.sessionId;
 		}
 
 		this.mapper?.handleUpdate(update);
+	}
+
+	private captureAdvertisedInventory(update: AcpSessionUpdate): void {
+		if (update.sessionUpdate !== "available_commands_update") {
+			return;
+		}
+
+		const tools = update._meta?.tools;
+		if (Array.isArray(tools)) {
+			this.advertisedTools = tools.filter(
+				(t): t is string => typeof t === "string" && t.length > 0,
+			);
+		}
+
+		const commands = update.availableCommands;
+		if (Array.isArray(commands)) {
+			this.advertisedSlashCommands = commands
+				.map((c) => (typeof c?.name === "string" ? c.name : null))
+				.filter((name): name is string => Boolean(name));
+		}
 	}
 
 	/**
