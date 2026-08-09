@@ -12,6 +12,8 @@ export type MapperContext = {
 	workingDirectory?: string;
 	model?: string;
 	getSessionId(): string;
+	/** Skills staged for this run (surfaced in the init message). */
+	getStagedSkillNames(): string[];
 	emitMessage(message: SDKMessage): void;
 	onSessionId(sessionId: string): void;
 };
@@ -368,7 +370,7 @@ export class GrokEventMapper {
 			permissionMode: "default" as const,
 			slash_commands: [] as string[],
 			output_style: "default",
-			skills: [] as string[],
+			skills: this.ctx.getStagedSkillNames(),
 			plugins: [] as Array<{ name: string; path: string }>,
 			uuid: crypto.randomUUID(),
 			session_id: sessionId,

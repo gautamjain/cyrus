@@ -37,6 +37,7 @@ import { GrokMessageFormatter } from "./formatter.js";
 import { GrokEventMapper } from "./GrokEventMapper.js";
 import { GrokSkillStager } from "./GrokSkillStager.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
+import { adaptSkillsGuidanceForGrok } from "./skillsGuidance.js";
 import {
 	buildRejectionOutcome,
 	describePermissionRequest,
@@ -181,6 +182,7 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 			workingDirectory: workspace,
 			model: this.resolvedModelId(),
 			getSessionId: () => this.sessionInfo?.sessionId || "pending",
+			getStagedSkillNames: () => this.skillStager.getStagedSkillNames(),
 			emitMessage: (message) => {
 				this.messages.push(message);
 				this.writeSdkMessageLog(message);
@@ -521,7 +523,11 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 		const sessionMeta: Record<string, unknown> = {};
 		if (this.config.appendSystemPrompt) {
-			sessionMeta.rules = this.config.appendSystemPrompt;
+			// Claude-shaped "Skill tool" guidance is rewritten only here so Claude/Codex
+			// prompts stay unchanged; Grok Build has no Skill tool (load SKILL.md via read).
+			sessionMeta.rules = adaptSkillsGuidanceForGrok(
+				this.config.appendSystemPrompt,
+			);
 		}
 
 		const { sessionId, currentModel } = await this.openOrResumeSession(

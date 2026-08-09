@@ -21,6 +21,7 @@ function runMapper() {
 		workingDirectory: "/repo",
 		model: "grok-4.5",
 		getSessionId: () => sessionId,
+		getStagedSkillNames: () => ["implementation", "verify-and-ship"],
 		emitMessage: (m) => messages.push(m),
 		onSessionId: (id) => {
 			sessionId = id;
@@ -65,11 +66,18 @@ describe("SDKMessage contract for AgentSessionManager", () => {
 		const init = messages.find(
 			(m) =>
 				m.type === "system" && (m as { subtype?: string }).subtype === "init",
-		) as { type: string; subtype: string; session_id: string; model?: string };
+		) as {
+			type: string;
+			subtype: string;
+			session_id: string;
+			model?: string;
+			skills?: string[];
+		};
 
 		expect(init).toBeDefined();
 		expect(init.session_id).toBe("sess-abc");
 		expect(init.model).toBe("grok-4.5");
+		expect(init.skills).toEqual(["implementation", "verify-and-ship"]);
 		expect(getSessionId()).toBe("sess-abc");
 	});
 
