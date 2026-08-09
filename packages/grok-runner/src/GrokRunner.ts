@@ -37,11 +37,16 @@ import { GrokMessageFormatter } from "./formatter.js";
 import { GrokEventMapper } from "./GrokEventMapper.js";
 import { GrokSkillStager } from "./GrokSkillStager.js";
 import { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
-import { adaptSkillsGuidanceForGrok } from "./skillsGuidance.js";
+import {
+	listAvailableInitTools,
+	listInitSlashCommands,
+} from "./sessionInventory.js";
+import { applyGrokSkillsGuidance } from "./skillsGuidance.js";
 import {
 	buildRejectionOutcome,
 	describePermissionRequest,
 	evaluatePermissionRequest,
+	type GrokToolPolicy,
 	translateToolRules,
 } from "./toolPolicy.js";
 import {
@@ -107,6 +112,8 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	private deniedThisTurn: string[] = [];
 	/** Every policy refusal in this session, surfaced on the result message. */
 	private deniedThisSession: Array<{ tool: string; reason: string }> = [];
+	/** Permission policy for this session (CLI flags + init inventory). */
+	private sessionToolPolicy: GrokToolPolicy | null = null;
 
 	constructor(config: GrokRunnerConfig) {
 		super();
@@ -178,11 +185,22 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 		this.setupLogging(workspace);
 
+		// Policy is stable for the session; compute once for init inventory + CLI args.
+		const toolPolicy = translateToolRules(
+			this.config.allowedTools,
+			this.config.disallowedTools,
+		);
+		this.sessionToolPolicy = toolPolicy;
+
 		this.mapper = new GrokEventMapper({
 			workingDirectory: workspace,
 			model: this.resolvedModelId(),
 			getSessionId: () => this.sessionInfo?.sessionId || "pending",
 			getStagedSkillNames: () => this.skillStager.getStagedSkillNames(),
+			getAvailableTools: () =>
+				listAvailableInitTools(this.sessionToolPolicy ?? toolPolicy),
+			getSlashCommands: () =>
+				listInitSlashCommands(this.skillStager.getStagedSkillNames()),
 			emitMessage: (message) => {
 				this.messages.push(message);
 				this.writeSdkMessageLog(message);
@@ -389,10 +407,9 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 	private async runSession(prompt: string, workspace: string): Promise<void> {
 		const binary = resolveGrokBinary(this.config.grokPath);
-		const policy = translateToolRules(
-			this.config.allowedTools,
-			this.config.disallowedTools,
-		);
+		const policy =
+			this.sessionToolPolicy ??
+			translateToolRules(this.config.allowedTools, this.config.disallowedTools);
 		const expandEnv = buildMcpExpandEnv(workspace);
 		const args = this.buildAgentArgs(policy);
 		const env = this.buildChildEnv(expandEnv);
@@ -523,10 +540,12 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 		const sessionMeta: Record<string, unknown> = {};
 		if (this.config.appendSystemPrompt) {
-			// Claude-shaped "Skill tool" guidance is rewritten only here so Claude/Codex
-			// prompts stay unchanged; Grok Build has no Skill tool (load SKILL.md via read).
-			sessionMeta.rules = adaptSkillsGuidanceForGrok(
+			// Replace the delimited skills section with Grok load instructions.
+			// Claude/Codex never enter GrokRunner, so their prompts stay skill-tool shaped.
+			const skillNames = this.skillStager.getStagedSkillNames();
+			sessionMeta.rules = applyGrokSkillsGuidance(
 				this.config.appendSystemPrompt,
+				skillNames,
 			);
 		}
 

@@ -9,6 +9,8 @@ describe("GrokEventMapper suppressUpdates", () => {
 			workingDirectory: "/tmp",
 			getSessionId: () => "s1",
 			getStagedSkillNames: () => [],
+			getAvailableTools: () => ["Read"],
+			getSlashCommands: () => [],
 			emitMessage: (m) => messages.push(m),
 			onSessionId: () => {},
 		});
@@ -55,6 +57,8 @@ describe("GrokEventMapper suppressUpdates", () => {
 			workingDirectory: "/tmp",
 			getSessionId: () => "s1",
 			getStagedSkillNames: () => [],
+			getAvailableTools: () => ["Read"],
+			getSlashCommands: () => [],
 			emitMessage: (m) => messages.push(m),
 			onSessionId: () => {},
 		});

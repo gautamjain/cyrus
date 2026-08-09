@@ -1,7 +1,11 @@
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SdkPluginConfig } from "cyrus-claude-runner";
-import type { ILogger } from "cyrus-core";
+import {
+	formatSkillsGuidance,
+	type ILogger,
+	type SkillLoadPath,
+} from "cyrus-core";
 
 /**
  * Session context used to evaluate per-skill scope restrictions. Each dimension
@@ -320,10 +324,15 @@ export class SkillsPluginResolver {
 	 *
 	 * Accepts pre-resolved plugins to avoid redundant filesystem access
 	 * when resolve() is also called separately for the runner config.
+	 *
+	 * @param options.skillLoadPath How the agent loads skill bodies.
+	 *   - `skill-tool` (default): Claude Skill tool
+	 *   - `skill-md-read`: Grok Build (read SKILL.md; no Skill tool)
 	 */
 	async buildSkillsGuidance(
 		plugins?: SdkPluginConfig[],
 		context?: SkillSessionContext,
+		options?: { skillLoadPath?: SkillLoadPath },
 	): Promise<string> {
 		const resolvedPlugins = plugins ?? (await this.resolve());
 		const availableSkills = await this.discoverSkillNames(
@@ -331,22 +340,9 @@ export class SkillsPluginResolver {
 			context,
 		);
 
-		if (availableSkills.length === 0) {
-			return "";
-		}
-
-		const skillsList = availableSkills.map((s) => `\`${s}\``).join(", ");
-
-		return (
-			"\n\n## Skills\n\n" +
-			`You have skills available via the Skill tool: ${skillsList}\n\n` +
-			"Choose the appropriate skill based on the context:\n\n" +
-			"- **Code changes requested** (feature, bug fix, refactor): Use `implementation` to write code, then `verify-and-ship` to run checks and create a PR, then `summarize` to narrate results.\n" +
-			"- **Bug report or error**: Use `debug` to reproduce, root-cause, and fix, then `verify-and-ship`, then `summarize`.\n" +
-			"- **Question or research request**: Use `investigate` to search the codebase and provide an answer, then `summarize`.\n" +
-			"- **PR review feedback** (changes requested): Use `implementation` to address review comments, then `verify-and-ship`.\n\n" +
-			"Analyze the issue description, labels, and any user comments to determine which workflow fits. " +
-			"Do NOT skip the verify-and-ship step if you made code changes — it ensures quality checks pass and a PR is created."
+		return formatSkillsGuidance(
+			availableSkills,
+			options?.skillLoadPath ?? "skill-tool",
 		);
 	}
 

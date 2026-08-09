@@ -1,29 +1,34 @@
+import { formatSkillsGuidance } from "cyrus-core";
 import { describe, expect, it } from "vitest";
-import { adaptSkillsGuidanceForGrok } from "../src/skillsGuidance.js";
+import { applyGrokSkillsGuidance } from "../src/skillsGuidance.js";
 
-const claudeShaped = `## Skills
+describe("applyGrokSkillsGuidance", () => {
+	it("replaces the delimited Claude skills section with skill-md-read wording", () => {
+		const claude = formatSkillsGuidance(
+			["implementation", "verify-and-ship"],
+			"skill-tool",
+		);
+		const prompt = `Intro text.${claude}\n\nTrailing.`;
+		const out = applyGrokSkillsGuidance(prompt, [
+			"implementation",
+			"verify-and-ship",
+		]);
 
-You have skills available via the Skill tool: \`implementation\`, \`verify-and-ship\`, \`summarize\`
-
-Choose the appropriate skill based on the context:
-
-- **Code changes requested** (feature, bug fix, refactor): Use \`implementation\` to write code, then \`verify-and-ship\` to run checks and create a PR, then \`summarize\` to narrate results.
-`;
-
-describe("adaptSkillsGuidanceForGrok", () => {
-	it("rewrites Skill tool wording and documents SKILL.md load path", () => {
-		const out = adaptSkillsGuidanceForGrok(claudeShaped);
+		expect(out).toContain("Intro text.");
+		expect(out).toContain("Trailing.");
 		expect(out).not.toContain("via the Skill tool");
-		expect(out).toContain("You have skills available:");
-		expect(out).toContain("`implementation`");
 		expect(out).toContain("Grok has no Skill tool");
 		expect(out).toContain("SKILL.md");
-		expect(out).toContain(".agents/skills/<name>/SKILL.md");
-		expect(out).toContain("Choose the appropriate skill based on the context:");
+		expect(out).toContain("`implementation`");
+		expect(out).toContain("<!-- cyrus-skills-guidance -->");
 	});
 
-	it("leaves prompts without Skill-tool phrasing unchanged", () => {
-		const plain = "No skills section here.";
-		expect(adaptSkillsGuidanceForGrok(plain)).toBe(plain);
+	it("appends Grok guidance when no delimited section exists", () => {
+		const out = applyGrokSkillsGuidance("No skills section.", [
+			"implementation",
+		]);
+		expect(out.startsWith("No skills section.")).toBe(true);
+		expect(out).toContain("Grok has no Skill tool");
+		expect(out).toContain("`implementation`");
 	});
 });

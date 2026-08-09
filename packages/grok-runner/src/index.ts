@@ -24,7 +24,11 @@ export {
 	type SkillStagingInput,
 } from "./GrokSkillStager.js";
 export { hasGrokCachedAuth, resolveGrokBinary } from "./grokBinary.js";
-export { adaptSkillsGuidanceForGrok } from "./skillsGuidance.js";
+export {
+	listAvailableInitTools,
+	listInitSlashCommands,
+} from "./sessionInventory.js";
+export { applyGrokSkillsGuidance } from "./skillsGuidance.js";
 export {
 	buildRejectionOutcome,
 	describePermissionRequest,

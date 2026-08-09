@@ -284,6 +284,14 @@ export type {
 	ISimpleAgentRunner,
 	ISimpleAgentRunnerConfig,
 } from "./simple-agent-runner-types.js";
+// Skills guidance (runner-aware load instructions for system prompts)
+export type { SkillLoadPath } from "./skills-guidance.js";
+export {
+	formatSkillsGuidance,
+	replaceSkillsGuidance,
+	SKILLS_GUIDANCE_END,
+	SKILLS_GUIDANCE_START,
+} from "./skills-guidance.js";
 // Platform-agnostic webhook type aliases - exported from issue-tracker
 // These are now defined in issue-tracker/types.ts as aliases to Linear SDK webhook types
 // EdgeWorker and other high-level code should use these generic names via issue-tracker exports

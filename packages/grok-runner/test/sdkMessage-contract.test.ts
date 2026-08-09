@@ -22,6 +22,8 @@ function runMapper() {
 		model: "grok-4.5",
 		getSessionId: () => sessionId,
 		getStagedSkillNames: () => ["implementation", "verify-and-ship"],
+		getAvailableTools: () => ["Read", "Bash", "Edit"],
+		getSlashCommands: () => ["implementation", "verify-and-ship"],
 		emitMessage: (m) => messages.push(m),
 		onSessionId: (id) => {
 			sessionId = id;
@@ -78,6 +80,15 @@ describe("SDKMessage contract for AgentSessionManager", () => {
 		expect(init.session_id).toBe("sess-abc");
 		expect(init.model).toBe("grok-4.5");
 		expect(init.skills).toEqual(["implementation", "verify-and-ship"]);
+		expect((init as { tools?: string[] }).tools).toEqual([
+			"Read",
+			"Bash",
+			"Edit",
+		]);
+		expect((init as { slash_commands?: string[] }).slash_commands).toEqual([
+			"implementation",
+			"verify-and-ship",
+		]);
 		expect(getSessionId()).toBe("sess-abc");
 	});
 
