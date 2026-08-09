@@ -800,6 +800,11 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 		this.mapper?.handleUpdate(update);
 	}
 
+	/**
+	 * Grok advertises live tools + slash commands on available_commands_update
+	 * (tools under _meta.tools; commands under availableCommands). Same inventory
+	 * headless streaming-json surfaces as available_commands / system init.
+	 */
 	private captureAdvertisedInventory(update: AcpSessionUpdate): void {
 		if (update.sessionUpdate !== "available_commands_update") {
 			return;
