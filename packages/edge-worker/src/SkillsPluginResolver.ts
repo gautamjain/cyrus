@@ -1,7 +1,7 @@
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SdkPluginConfig } from "cyrus-claude-runner";
-import type { ILogger } from "cyrus-core";
+import type { ILogger, RunnerType } from "cyrus-core";
 
 /**
  * Session context used to evaluate per-skill scope restrictions. Each dimension
@@ -324,6 +324,7 @@ export class SkillsPluginResolver {
 	async buildSkillsGuidance(
 		plugins?: SdkPluginConfig[],
 		context?: SkillSessionContext,
+		options?: { runnerType?: RunnerType },
 	): Promise<string> {
 		const resolvedPlugins = plugins ?? (await this.resolve());
 		const availableSkills = await this.discoverSkillNames(
@@ -336,10 +337,15 @@ export class SkillsPluginResolver {
 		}
 
 		const skillsList = availableSkills.map((s) => `\`${s}\``).join(", ");
+		const availability =
+			options?.runnerType === "grok"
+				? `You have skills available by reading SKILL.md: ${skillsList}`
+				: `You have skills available via the Skill tool: ${skillsList}`;
 
 		return (
 			"\n\n## Skills\n\n" +
-			`You have skills available via the Skill tool: ${skillsList}\n\n` +
+			availability +
+			"\n\n" +
 			"Choose the appropriate skill based on the context:\n\n" +
 			"- **Code changes requested** (feature, bug fix, refactor): Use `implementation` to write code, then `verify-and-ship` to run checks and create a PR, then `summarize` to narrate results.\n" +
 			"- **Bug report or error**: Use `debug` to reproduce, root-cause, and fix, then `verify-and-ship`, then `summarize`.\n" +

@@ -8,6 +8,9 @@ describe("GrokEventMapper suppressUpdates", () => {
 		const mapper = new GrokEventMapper({
 			workingDirectory: "/tmp",
 			getSessionId: () => "s1",
+			getStagedSkillNames: () => [],
+			getAvailableTools: () => ["Read"],
+			getSlashCommands: () => [],
 			emitMessage: (m) => messages.push(m),
 			onSessionId: () => {},
 		});
@@ -53,6 +56,9 @@ describe("GrokEventMapper suppressUpdates", () => {
 		const mapper = new GrokEventMapper({
 			workingDirectory: "/tmp",
 			getSessionId: () => "s1",
+			getStagedSkillNames: () => [],
+			getAvailableTools: () => ["Read"],
+			getSlashCommands: () => [],
 			emitMessage: (m) => messages.push(m),
 			onSessionId: () => {},
 		});

@@ -6,13 +6,19 @@ import {
 	projectGrokToolName,
 } from "../src/GrokEventMapper.js";
 
-function collectMapper() {
+function collectMapper(
+	stagedSkills: string[] = [],
+	tools: string[] = ["Read", "Bash", "Edit"],
+) {
 	const messages: SDKMessage[] = [];
 	let sessionId = "pending";
 	const mapper = new GrokEventMapper({
 		workingDirectory: "/tmp/work",
 		model: "grok-4.5",
 		getSessionId: () => sessionId,
+		getStagedSkillNames: () => stagedSkills,
+		getAvailableTools: () => tools,
+		getSlashCommands: () => stagedSkills,
 		emitMessage: (m) => messages.push(m),
 		onSessionId: (id) => {
 			sessionId = id;
@@ -43,6 +49,9 @@ describe("GrokEventMapper", () => {
 		const mapper = new GrokEventMapper({
 			workingDirectory: "/tmp",
 			getSessionId: () => "s1",
+			getStagedSkillNames: () => [],
+			getAvailableTools: () => ["Read"],
+			getSlashCommands: () => [],
 			emitMessage: (m) => messages.push(m),
 			onSessionId: () => {},
 		});
@@ -66,6 +75,26 @@ describe("GrokEventMapper", () => {
 		) as any;
 		expect(result?.message.content[0].is_error).toBe(true);
 		expect(result?.message.content[0].content).toBe("Tool cancelled");
+	});
+
+	it("emits tools, skills, and slash_commands on init", () => {
+		const { mapper, messages } = collectMapper(
+			["implementation", "verify-and-ship"],
+			["Read", "Bash"],
+		);
+		mapper.emitInit("sess-skills", "grok-4.5");
+		const init = messages[0] as {
+			type: string;
+			subtype?: string;
+			skills?: string[];
+			tools?: string[];
+			slash_commands?: string[];
+		};
+		expect(init.type).toBe("system");
+		expect(init.subtype).toBe("init");
+		expect(init.skills).toEqual(["implementation", "verify-and-ship"]);
+		expect(init.slash_commands).toEqual(["implementation", "verify-and-ship"]);
+		expect(init.tools).toEqual(["Read", "Bash"]);
 	});
 
 	it("emits init, tool_use, tool_result, assistant text, and result", () => {
