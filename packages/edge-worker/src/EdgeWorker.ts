@@ -6182,7 +6182,7 @@ ${taskSection}`;
 		// 3. Append skills guidance — instruct the agent to use skills based on context.
 		// Skills hidden by per-skill scope (repo / Linear team / Linear label) are
 		// omitted from the guidance so the model doesn't reference skills it
-		// cannot invoke. Wording follows the selected runner.
+		// cannot invoke.
 		const skillsContext = this.buildSkillSessionContext(
 			repositories[0]!,
 			input.fullIssue,

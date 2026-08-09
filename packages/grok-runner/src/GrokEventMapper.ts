@@ -12,11 +12,8 @@ export type MapperContext = {
 	workingDirectory?: string;
 	model?: string;
 	getSessionId(): string;
-	/** Skills staged for this run (surfaced in the init message). */
 	getStagedSkillNames(): string[];
-	/** Tools available under the session policy (bus names). */
 	getAvailableTools(): string[];
-	/** Slash commands known at init (staged skills). */
 	getSlashCommands(): string[];
 	emitMessage(message: SDKMessage): void;
 	onSessionId(sessionId: string): void;

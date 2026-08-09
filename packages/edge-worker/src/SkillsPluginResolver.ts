@@ -320,9 +320,6 @@ export class SkillsPluginResolver {
 	 *
 	 * Accepts pre-resolved plugins to avoid redundant filesystem access
 	 * when resolve() is also called separately for the runner config.
-	 *
-	 * @param options.runnerType Selected agent runner. Grok gets SKILL.md
-	 *   load wording; all other runners keep the Skill tool line.
 	 */
 	async buildSkillsGuidance(
 		plugins?: SdkPluginConfig[],

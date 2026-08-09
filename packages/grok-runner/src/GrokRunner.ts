@@ -111,7 +111,6 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 	private deniedThisTurn: string[] = [];
 	/** Every policy refusal in this session, surfaced on the result message. */
 	private deniedThisSession: Array<{ tool: string; reason: string }> = [];
-	/** Permission policy for this session (CLI flags + init inventory). */
 	private sessionToolPolicy: GrokToolPolicy | null = null;
 
 	constructor(config: GrokRunnerConfig) {
@@ -184,7 +183,6 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 		this.setupLogging(workspace);
 
-		// Policy is stable for the session; compute once for init inventory + CLI args.
 		const toolPolicy = translateToolRules(
 			this.config.allowedTools,
 			this.config.disallowedTools,
@@ -539,7 +537,6 @@ export class GrokRunner extends EventEmitter implements IAgentRunner {
 
 		const sessionMeta: Record<string, unknown> = {};
 		if (this.config.appendSystemPrompt) {
-			// EdgeWorker already emits Grok load-path wording when runner is grok.
 			sessionMeta.rules = this.config.appendSystemPrompt;
 		}
 
