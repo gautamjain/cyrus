@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { LinearClient } from "@linear/sdk";
 import type {
 	McpServerConfig,
@@ -123,6 +123,7 @@ import {
 	isNoteOnMergeRequest,
 	stripMention as stripGitLabMention,
 } from "cyrus-gitlab-event-transport";
+import { GrokRunner } from "cyrus-grok-runner";
 import {
 	LinearEventTransport,
 	LinearIssueTrackerService,
@@ -195,6 +196,34 @@ export declare interface EdgeWorker {
 type CyrusToolsMcpContext = {
 	contextId?: string;
 };
+
+/**
+ * Resolve repository-scoped paths. Relative `mcpConfigPath` must resolve against
+ * the repo clone — not process.cwd() (often `/` under systemd → `/.mcp.json`).
+ */
+function resolveRepositoryConfig(repo: RepositoryConfig): RepositoryConfig {
+	const repositoryPath = resolvePath(repo.repositoryPath);
+	const resolveAgainstRepo = (pathValue: string): string => {
+		if (pathValue.startsWith("~/") || isAbsolute(pathValue)) {
+			return resolvePath(pathValue);
+		}
+		return resolve(repositoryPath, pathValue);
+	};
+	const mcp = repo.mcpConfigPath;
+	return {
+		...repo,
+		repositoryPath,
+		workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
+		mcpConfigPath: !mcp
+			? undefined
+			: Array.isArray(mcp)
+				? mcp.map(resolveAgainstRepo)
+				: resolveAgainstRepo(mcp),
+		promptTemplatePath: repo.promptTemplatePath
+			? resolvePath(repo.promptTemplatePath)
+			: undefined,
+	};
+}
 
 /**
  * Unified edge worker that **orchestrates**
@@ -493,21 +522,7 @@ export class EdgeWorker extends EventEmitter {
 		for (const repo of config.repositories) {
 			if (repo.isActive !== false) {
 				// Resolve paths that may contain tilde (~) prefix
-				const resolvedRepo: RepositoryConfig = {
-					...repo,
-					repositoryPath: resolvePath(repo.repositoryPath),
-					workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
-					mcpConfigPath: Array.isArray(repo.mcpConfigPath)
-						? repo.mcpConfigPath.map(resolvePath)
-						: repo.mcpConfigPath
-							? resolvePath(repo.mcpConfigPath)
-							: undefined,
-					promptTemplatePath: repo.promptTemplatePath
-						? resolvePath(repo.promptTemplatePath)
-						: undefined,
-				};
-
-				this.repositories.set(repo.id, resolvedRepo);
+				this.repositories.set(repo.id, resolveRepositoryConfig(repo));
 			}
 		}
 
@@ -2956,22 +2971,7 @@ ${taskSection}`;
 			try {
 				this.logger.info(`➕ Adding repository: ${repo.name} (${repo.id})`);
 
-				// Resolve paths that may contain tilde (~) prefix
-				const resolvedRepo: RepositoryConfig = {
-					...repo,
-					repositoryPath: resolvePath(repo.repositoryPath),
-					workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
-					mcpConfigPath: Array.isArray(repo.mcpConfigPath)
-						? repo.mcpConfigPath.map(resolvePath)
-						: repo.mcpConfigPath
-							? resolvePath(repo.mcpConfigPath)
-							: undefined,
-					promptTemplatePath: repo.promptTemplatePath
-						? resolvePath(repo.promptTemplatePath)
-						: undefined,
-				};
-
-				// Add to internal map
+				const resolvedRepo = resolveRepositoryConfig(repo);
 				this.repositories.set(repo.id, resolvedRepo);
 
 				this.logger.info(`✅ Repository added successfully: ${repo.name}`);
@@ -2999,22 +2999,7 @@ ${taskSection}`;
 
 				this.logger.info(`🔄 Updating repository: ${repo.name} (${repo.id})`);
 
-				// Resolve paths that may contain tilde (~) prefix
-				const resolvedRepo: RepositoryConfig = {
-					...repo,
-					repositoryPath: resolvePath(repo.repositoryPath),
-					workspaceBaseDir: resolvePath(repo.workspaceBaseDir),
-					mcpConfigPath: Array.isArray(repo.mcpConfigPath)
-						? repo.mcpConfigPath.map(resolvePath)
-						: repo.mcpConfigPath
-							? resolvePath(repo.mcpConfigPath)
-							: undefined,
-					promptTemplatePath: repo.promptTemplatePath
-						? resolvePath(repo.promptTemplatePath)
-						: undefined,
-				};
-
-				// Update stored config
+				const resolvedRepo = resolveRepositoryConfig(repo);
 				this.repositories.set(repo.id, resolvedRepo);
 
 				// If active status changed
@@ -5334,7 +5319,7 @@ ${taskSection}`;
 	 * Instantiate the appropriate runner for the given type.
 	 */
 	private createRunnerForType(
-		runnerType: "claude" | "gemini" | "codex" | "cursor",
+		runnerType: "claude" | "gemini" | "codex" | "cursor" | "grok",
 		config: AgentRunnerConfig,
 	): IAgentRunner {
 		switch (runnerType) {
@@ -5352,6 +5337,8 @@ ${taskSection}`;
 				return new CodexRunner(config);
 			case "cursor":
 				return new CursorRunner(config);
+			case "grok":
+				return new GrokRunner(config);
 			default:
 				throw new Error(`Unknown runner type: ${runnerType satisfies never}`);
 		}
@@ -5850,12 +5837,15 @@ ${taskSection}`;
 					? "codex"
 					: session.cursorSessionId
 						? "cursor"
-						: null;
+						: session.grokSessionId
+							? "grok"
+							: null;
 		const runnerSessionId =
 			session.claudeSessionId ??
 			session.geminiSessionId ??
 			session.codexSessionId ??
 			session.cursorSessionId ??
+			session.grokSessionId ??
 			null;
 
 		const sessionSource = session.id.startsWith("github-")
@@ -6198,9 +6188,14 @@ ${taskSection}`;
 			input.fullIssue,
 			input.session,
 		);
+		const runnerType = this.runnerSelectionService.determineRunnerSelection(
+			input.labels || [],
+			input.fullIssue?.description,
+		).runnerType;
 		systemPrompt += await this.skillsPluginResolver.buildSkillsGuidance(
 			undefined,
 			skillsContext,
+			{ runnerType },
 		);
 
 		// 4. Append agent context — dynamic values for skills to reference
@@ -7205,12 +7200,14 @@ ${input.userComment}
 		const hasGeminiSession = !isNewSession && Boolean(session.geminiSessionId);
 		const hasCodexSession = !isNewSession && Boolean(session.codexSessionId);
 		const hasCursorSession = !isNewSession && Boolean(session.cursorSessionId);
+		const hasGrokSession = !isNewSession && Boolean(session.grokSessionId);
 		const needsNewSession =
 			isNewSession ||
 			(!hasClaudeSession &&
 				!hasGeminiSession &&
 				!hasCodexSession &&
-				!hasCursorSession);
+				!hasCursorSession &&
+				!hasGrokSession);
 
 		// Fetch system prompt based on labels
 
@@ -7253,7 +7250,9 @@ ${input.userComment}
 					? session.geminiSessionId
 					: session.codexSessionId
 						? session.codexSessionId
-						: session.cursorSessionId;
+						: session.cursorSessionId
+							? session.cursorSessionId
+							: session.grokSessionId;
 
 		console.log(
 			`[resumeAgentSession] needsNewSession=${needsNewSession}, resumeSessionId=${resumeSessionId ?? "none"}`,

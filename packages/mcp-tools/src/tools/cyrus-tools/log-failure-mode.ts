@@ -12,7 +12,7 @@ import { z } from "zod";
  *     server-side AND (for Linear sessions) the Linear AgentSession id —
  *     these are the same value.
  *   - `runnerSessionId` + `runnerType` — the underlying Claude / Gemini
- *     / Codex / Cursor session id so a team member can fetch the
+ *     / Codex / Cursor / Grok session id so a team member can fetch the
  *     transcript that produced the failure.
  *   - `sourceIssueIdentifier` — the customer-facing source artifact
  *     identifier (Linear "ENG-76", GitHub PR "cyrus#1234", GitLab MR,
@@ -30,7 +30,7 @@ import { z } from "zod";
 export interface ResolvedSession {
 	sessionId: string;
 	runnerSessionId?: string | null;
-	runnerType?: "claude" | "gemini" | "codex" | "cursor" | null;
+	runnerType?: "claude" | "gemini" | "codex" | "cursor" | "grok" | null;
 	sourceIssueIdentifier?: string | null;
 	workspacePath?: string | null;
 	sessionSource?: string | null;

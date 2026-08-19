@@ -228,12 +228,18 @@ export class WorkerService {
 				process.env.CYRUS_GEMINI_DEFAULT_MODEL || edgeConfig.geminiDefaultModel,
 			codexDefaultModel:
 				process.env.CYRUS_CODEX_DEFAULT_MODEL || edgeConfig.codexDefaultModel,
+			grokDefaultModel:
+				process.env.CYRUS_GROK_DEFAULT_MODEL || edgeConfig.grokDefaultModel,
+			grokDefaultFallbackModel:
+				process.env.CYRUS_GROK_DEFAULT_FALLBACK_MODEL ||
+				edgeConfig.grokDefaultFallbackModel,
 			defaultRunner:
 				(process.env.CYRUS_DEFAULT_RUNNER as
 					| "claude"
 					| "gemini"
 					| "codex"
 					| "cursor"
+					| "grok"
 					| undefined) || edgeConfig.defaultRunner,
 			issueUpdateTrigger: edgeConfig.issueUpdateTrigger,
 			prReviewTrigger: edgeConfig.prReviewTrigger,

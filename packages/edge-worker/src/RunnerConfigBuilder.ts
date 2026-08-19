@@ -351,6 +351,11 @@ export class RunnerConfigBuilder {
 			modelOverride = this.runnerSelector.getDefaultModelForRunner("cursor");
 			fallbackModelOverride =
 				this.runnerSelector.getDefaultFallbackModelForRunner("cursor");
+		} else if (input.session.grokSessionId && runnerType !== "grok") {
+			runnerType = "grok";
+			modelOverride = this.runnerSelector.getDefaultModelForRunner("grok");
+			fallbackModelOverride =
+				this.runnerSelector.getDefaultFallbackModelForRunner("grok");
 		}
 
 		// Log model override if found
@@ -425,8 +430,9 @@ export class RunnerConfigBuilder {
 			...(this.runnerSupportsManagedSkills(runnerType) &&
 				input.plugins?.length && { plugins: input.plugins }),
 			// Skill scope allow-list. Claude passes this through to the SDK's
-			// `query()` `skills` option; Codex uses it to stage only allowed skill
-			// directories into the session worktree for repository-scope discovery.
+			// `query()` `skills` option; Codex and Grok use it to stage only
+			// allowed skill directories into the session worktree for native
+			// discovery (`.agents/skills/`).
 			...(this.runnerSupportsManagedSkills(runnerType) &&
 				input.skills !== undefined && { skills: input.skills }),
 			// SDK sandbox settings (Claude runner only):
@@ -500,7 +506,11 @@ export class RunnerConfigBuilder {
 	}
 
 	private runnerSupportsManagedSkills(runnerType: RunnerType): boolean {
-		return runnerType === "claude" || runnerType === "codex";
+		// Claude: SDK `plugins` / `skills` options.
+		// Codex / Grok: stage into worktree `.agents/skills/` for native discovery.
+		return (
+			runnerType === "claude" || runnerType === "codex" || runnerType === "grok"
+		);
 	}
 
 	/**

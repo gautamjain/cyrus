@@ -539,9 +539,15 @@
 		"cursorDefaultFallbackModel": {
 			"type": "string"
 		},
+		"grokDefaultModel": {
+			"type": "string"
+		},
+		"grokDefaultFallbackModel": {
+			"type": "string"
+		},
 		"defaultRunner": {
 			"type": "string",
-			"enum": ["claude", "gemini", "codex", "cursor"]
+			"enum": ["claude", "gemini", "codex", "cursor", "grok"]
 		},
 		"defaultModel": {
 			"type": "string"

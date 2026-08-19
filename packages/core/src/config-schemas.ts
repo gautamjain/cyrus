@@ -3,7 +3,13 @@ import { z } from "zod";
 /**
  * Supported runner/harness types for agent execution.
  */
-export const RunnerTypeSchema = z.enum(["claude", "gemini", "codex", "cursor"]);
+export const RunnerTypeSchema = z.enum([
+	"claude",
+	"gemini",
+	"codex",
+	"cursor",
+	"grok",
+]);
 export type RunnerType = z.infer<typeof RunnerTypeSchema>;
 
 /**
@@ -358,6 +364,15 @@ export const EdgeConfigSchema = z.object({
 
 	/** Default Cursor fallback model if primary Cursor model is unavailable */
 	cursorDefaultFallbackModel: z.string().optional(),
+
+	/**
+	 * Default Grok Build model (e.g. "grok-4.5").
+	 * Prefer omitting / using "default" so Grok Build chooses its current default.
+	 */
+	grokDefaultModel: z.string().optional(),
+
+	/** Default Grok fallback model if primary is unavailable */
+	grokDefaultFallbackModel: z.string().optional(),
 
 	/**
 	 * Default runner/harness to use when no runner is specified via labels or description tags.

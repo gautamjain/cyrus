@@ -224,6 +224,11 @@ export class ConfigManager extends EventEmitter {
 				cursorDefaultFallbackModel:
 					parsedConfig.cursorDefaultFallbackModel ||
 					this.config.cursorDefaultFallbackModel,
+				grokDefaultModel:
+					parsedConfig.grokDefaultModel || this.config.grokDefaultModel,
+				grokDefaultFallbackModel:
+					parsedConfig.grokDefaultFallbackModel ||
+					this.config.grokDefaultFallbackModel,
 				defaultRunner: parsedConfig.defaultRunner || this.config.defaultRunner,
 				promptDefaults:
 					parsedConfig.promptDefaults || this.config.promptDefaults,
@@ -344,6 +349,8 @@ export class ConfigManager extends EventEmitter {
 			"codexDefaultModel",
 			"cursorDefaultModel",
 			"cursorDefaultFallbackModel",
+			"grokDefaultModel",
+			"grokDefaultFallbackModel",
 			"defaultModel",
 			"defaultFallbackModel",
 			"linearAllowedTools",

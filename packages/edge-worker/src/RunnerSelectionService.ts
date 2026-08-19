@@ -19,7 +19,7 @@ export class RunnerSelectionService {
 	 *
 	 * Priority:
 	 * 1. Explicit `defaultRunner` in config
-	 * 2. Auto-detect from available API keys (if exactly one runner has keys)
+	 * 2. Auto-detect from available credentials (if exactly one runner has them)
 	 * 3. Fall back to "claude"
 	 */
 	public getDefaultRunner(): RunnerType {
@@ -27,7 +27,7 @@ export class RunnerSelectionService {
 			return this.config.defaultRunner;
 		}
 
-		// Auto-detect from environment: if exactly one runner's API key is set, use it
+		// Auto-detect from environment: if exactly one runner's credentials are set, use it
 		const available: Array<RunnerType> = [];
 		if (process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY) {
 			available.push("claude");
@@ -40,6 +40,14 @@ export class RunnerSelectionService {
 		}
 		if (process.env.CURSOR_API_KEY) {
 			available.push("cursor");
+		}
+		// Grok auto-detect uses env only (same pattern as other runners).
+		// Browser login (~/.grok/auth.json) is still how GrokRunner authenticates
+		// at session start — it must not flip defaultRunner for every machine
+		// that happens to have interactive Grok installed (breaks CI/dev tests).
+		// Subscription users should set `"defaultRunner": "grok"` or use labels.
+		if (process.env.XAI_API_KEY || process.env.CYRUS_GROK_ENABLED === "1") {
+			available.push("grok");
 		}
 
 		if (available.length === 1 && available[0]) {
@@ -64,6 +72,10 @@ export class RunnerSelectionService {
 		if (runnerType === "cursor") {
 			return this.config.cursorDefaultModel || "composer-2";
 		}
+		if (runnerType === "grok") {
+			// "default" is a sentinel: GrokRunner omits -m so Grok Build picks its current default.
+			return this.config.grokDefaultModel || "default";
+		}
 		return this.config.codexDefaultModel || "gpt-5.5";
 	}
 
@@ -87,6 +99,9 @@ export class RunnerSelectionService {
 		}
 		if (runnerType === "cursor") {
 			return this.config.cursorDefaultFallbackModel || "composer-2";
+		}
+		if (runnerType === "grok") {
+			return this.config.grokDefaultFallbackModel || "default";
 		}
 		return "gpt-5";
 	}
@@ -113,7 +128,7 @@ export class RunnerSelectionService {
 	 * Determine runner type and model using labels + issue description tags.
 	 *
 	 * Supported description tags:
-	 * - [agent=claude|gemini|codex|cursor]
+	 * - [agent=claude|gemini|codex|cursor|grok]
 	 * - [model=<model-name>]
 	 *
 	 * Precedence:
@@ -146,12 +161,14 @@ export class RunnerSelectionService {
 			gemini: this.getDefaultModelForRunner("gemini"),
 			codex: this.getDefaultModelForRunner("codex"),
 			cursor: this.getDefaultModelForRunner("cursor"),
+			grok: this.getDefaultModelForRunner("grok"),
 		};
 		const defaultFallbackByRunner: Record<RunnerType, string> = {
 			claude: this.getDefaultFallbackModelForRunner("claude"),
 			gemini: this.getDefaultFallbackModelForRunner("gemini"),
 			codex: this.getDefaultFallbackModelForRunner("codex"),
 			cursor: this.getDefaultFallbackModelForRunner("cursor"),
+			grok: this.getDefaultFallbackModelForRunner("grok"),
 		};
 
 		const isCodexModel = (model: string): boolean =>
@@ -170,6 +187,9 @@ export class RunnerSelectionService {
 			) {
 				return "claude";
 			}
+			// Model "default" is the Grok omit--m sentinel and is intentionally
+			// not mapped here (ambiguous). Runner comes from labels/tags/defaultRunner.
+			if (normalizedModel.startsWith("grok")) return "grok";
 			if (isCodexModel(normalizedModel)) return "codex";
 			return undefined;
 		};
@@ -209,6 +229,9 @@ export class RunnerSelectionService {
 				}
 				return "gemini-2.5-flash";
 			}
+			if (runnerType === "grok") {
+				return "default";
+			}
 			if (isCodexModel(normalizedModel)) {
 				return "gpt-5.2-codex";
 			}
@@ -230,6 +253,9 @@ export class RunnerSelectionService {
 			if (lowercaseLabels.includes("gemini")) {
 				return "gemini";
 			}
+			if (lowercaseLabels.includes("grok") || lowercaseLabels.includes("xai")) {
+				return "grok";
+			}
 			if (lowercaseLabels.includes("claude")) {
 				return "claude";
 			}
@@ -244,6 +270,13 @@ export class RunnerSelectionService {
 			);
 			if (codexModelLabel) {
 				return codexModelLabel;
+			}
+
+			const grokModelLabel = lowercaseLabels.find(
+				(label) => label.startsWith("grok") && label !== "grok",
+			);
+			if (grokModelLabel) {
+				return grokModelLabel;
 			}
 
 			if (
@@ -282,9 +315,11 @@ export class RunnerSelectionService {
 					? "codex"
 					: agentFromDescription === "gemini"
 						? "gemini"
-						: agentFromDescription === "claude"
-							? "claude"
-							: undefined;
+						: agentFromDescription === "grok" || agentFromDescription === "xai"
+							? "grok"
+							: agentFromDescription === "claude"
+								? "claude"
+								: undefined;
 		const resolvedAgentFromLabels = resolveAgentFromLabel(normalizedLabels);
 
 		const modelFromDescription = descriptionModelTagRaw;
@@ -304,10 +339,16 @@ export class RunnerSelectionService {
 			modelOverride = undefined;
 		}
 
-		const resolvedModelOverride =
+		let resolvedModelOverride =
 			modelOverride ||
 			defaultModelByRunner[runnerType] ||
 			this.getDefaultModelForRunner(runnerType);
+
+		// Sentinel "default" is Grok-only (means omit -m). Never pass it to
+		// Claude/Gemini/Codex/Cursor.
+		if (resolvedModelOverride === "default" && runnerType !== "grok") {
+			resolvedModelOverride = this.getDefaultModelForRunner(runnerType);
+		}
 
 		let fallbackModelOverride = inferFallbackModel(
 			resolvedModelOverride,
@@ -315,6 +356,9 @@ export class RunnerSelectionService {
 		);
 		if (!fallbackModelOverride) {
 			fallbackModelOverride = defaultFallbackByRunner[runnerType];
+		}
+		if (fallbackModelOverride === "default" && runnerType !== "grok") {
+			fallbackModelOverride = this.getDefaultFallbackModelForRunner(runnerType);
 		}
 
 		return {

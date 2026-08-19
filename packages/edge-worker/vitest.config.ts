@@ -41,6 +41,10 @@ export default defineConfig({
 				__dirname,
 				"../gemini-runner/src/index.ts",
 			),
+			"cyrus-grok-runner": path.resolve(
+				__dirname,
+				"../grok-runner/src/index.ts",
+			),
 			"cyrus-simple-agent-runner": path.resolve(
 				__dirname,
 				"../simple-agent-runner/src/index.ts",

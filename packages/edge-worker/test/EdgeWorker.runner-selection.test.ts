@@ -9,6 +9,7 @@ import {
 } from "cyrus-core";
 import { CursorRunner } from "cyrus-cursor-runner";
 import { GeminiRunner } from "cyrus-gemini-runner";
+import { GrokRunner } from "cyrus-grok-runner";
 import { LinearEventTransport } from "cyrus-linear-event-transport";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSessionManager } from "../src/AgentSessionManager.js";
@@ -30,6 +31,7 @@ vi.mock("cyrus-claude-runner");
 vi.mock("cyrus-codex-runner");
 vi.mock("cyrus-cursor-runner");
 vi.mock("cyrus-gemini-runner");
+vi.mock("cyrus-grok-runner");
 vi.mock("cyrus-linear-event-transport");
 vi.mock("@linear/sdk");
 vi.mock("../src/SharedApplicationServer.js");
@@ -58,6 +60,7 @@ describe("EdgeWorker - Runner Selection Based on Labels", () => {
 	let mockCodexRunner: any;
 	let mockCursorRunner: any;
 	let mockGeminiRunner: any;
+	let mockGrokRunner: any;
 	let mockAgentSessionManager: any;
 	let capturedRunnerType: RunnerType | null = null;
 	let capturedRunnerConfig: any = null;
@@ -190,6 +193,24 @@ describe("EdgeWorker - Runner Selection Based on Labels", () => {
 			capturedRunnerType = "cursor";
 			capturedRunnerConfig = config;
 			return mockCursorRunner;
+		});
+
+		// Mock GrokRunner
+		mockGrokRunner = {
+			supportsStreamingInput: false,
+			start: vi.fn().mockResolvedValue({ sessionId: "grok-session-123" }),
+			startStreaming: vi
+				.fn()
+				.mockResolvedValue({ sessionId: "grok-session-123" }),
+			stop: vi.fn(),
+			isStreaming: vi.fn().mockReturnValue(false),
+			addStreamMessage: vi.fn(),
+			updatePromptVersions: vi.fn(),
+		};
+		vi.mocked(GrokRunner).mockImplementation(function (config: any) {
+			capturedRunnerType = "grok";
+			capturedRunnerConfig = config;
+			return mockGrokRunner;
 		});
 
 		// Mock AgentSessionManager
@@ -1142,6 +1163,71 @@ Issue: {{issue_identifier}}`;
 				"cursor-session-existing",
 			);
 			expect(mockCursorRunner.start).toHaveBeenCalledOnce();
+		});
+
+		it("should pass grokSessionId as resumeSessionId for grok continuations", async () => {
+			const mockIssue = createMockIssueWithLabels(["grok"]);
+			vi.spyOn(edgeWorker as any, "fetchFullIssueDetails").mockResolvedValue(
+				mockIssue,
+			);
+			vi.spyOn(edgeWorker as any, "buildSessionPrompt").mockResolvedValue(
+				"Resume this session",
+			);
+			vi.spyOn(edgeWorker as any, "savePersistedState").mockResolvedValue(
+				undefined,
+			);
+
+			const session: any = {
+				issueId: "issue-123",
+				workspace: { path: "/test/workspaces/TEST-123" },
+				issue: { identifier: "TEST-123" },
+				grokSessionId: "grok-session-existing",
+			};
+
+			await (edgeWorker as any).resumeAgentSession(
+				session,
+				mockRepository,
+				"agent-session-123",
+				mockAgentSessionManager,
+				"follow-up prompt",
+			);
+
+			expect(capturedRunnerType).toBe("grok");
+			expect(capturedRunnerConfig.resumeSessionId).toBe(
+				"grok-session-existing",
+			);
+			expect(mockGrokRunner.start).toHaveBeenCalledOnce();
+		});
+	});
+
+	describe("Grok runner selection", () => {
+		it("should select grok from label", () => {
+			const runnerSelection = (
+				edgeWorker as any
+			).runnerSelectionService.determineRunnerSelection(["grok"]);
+			expect(runnerSelection.runnerType).toBe("grok");
+			expect(runnerSelection.modelOverride).toBe("default");
+		});
+
+		it("should select grok from [agent=grok] description tag", () => {
+			const runnerSelection = (
+				edgeWorker as any
+			).runnerSelectionService.determineRunnerSelection(
+				[],
+				"Please implement this.\n[agent=grok]",
+			);
+			expect(runnerSelection.runnerType).toBe("grok");
+		});
+
+		it("should select grok from defaultRunner config", () => {
+			(edgeWorker as any).runnerSelectionService.setConfig({
+				...mockConfig,
+				defaultRunner: "grok",
+			});
+			const runnerSelection = (
+				edgeWorker as any
+			).runnerSelectionService.determineRunnerSelection([]);
+			expect(runnerSelection.runnerType).toBe("grok");
 		});
 	});
 });
